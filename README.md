@@ -5,7 +5,7 @@ Developed by John Hongyu Meng and Yijie Kang.
 
 
 ## Data Sources
-**Data instruction & metadata:**  
+**Data instruction, metadata and file manifest:**  
 [ALLEN BRAIN MAP: Multimodal Characterization in Mouse Visual Cortex](https://portal.brain-map.org/explore/classes/multimodal-characterization/multimodal-characterization-mouse-visual-cortex) [(Gouwens, et al, 2020)](https://pubmed.ncbi.nlm.nih.gov/33186530/).  
 **Transcriptomic data download index:**  
 http://data.nemoarchive.org/other/AIBS/AIBS_patchseq/transcriptome/scell/SMARTseq/processed/analysis/20200611/ (20200513_Mouse_PatchSeq_Release_count.v2.csv.tar is used here)
