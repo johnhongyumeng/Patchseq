@@ -14,6 +14,6 @@ http://data.nemoarchive.org/other/AIBS/AIBS_patchseq/transcriptome/scell/SMARTse
 ## Workflow
 1. select cells according to specific layer and cell types
 2. basic quality control based on selected cells' normalized (CPM) count matrix - **cell type annotation contamination issue unsolved, 01/06/2022**
-3. for cells that pass the quality control, find there electrophysiological data (in nwb files) from metadata
+3. for cells that pass the quality control, find their electrophysiological data's url (of nwb files) from file manifest
 4. download nwb files
 5. 
