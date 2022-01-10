@@ -1,0 +1,223 @@
+---
+title: "0110_patchseq_seurat_SST_PV"
+author: "Yagi"
+date: "2022/01/10"
+output: html_document
+---
+
+```{r}
+rm(list = ls())
+```
+\
+```{r}
+library(Seurat)
+library(ggplot2)
+library(pheatmap)
+```
+
+
+```{r}
+# read in data extracted by python from metadata and count.v2.csv
+# two cell type
+
+sst_L23_couts <- read.csv("sst_L23_counts.csv", header = T, check.names = F)
+rownames(sst_L23_couts) <- sst_L23_couts[,1]
+sst_L23_couts <- sst_L23_couts[, -1]
+
+
+pv_L23_couts <- read.csv("pv_L23_counts.csv", header = T, check.names = F)
+rownames(pv_L23_couts) <- pv_L23_couts[,1]
+pv_L23_couts <- pv_L23_couts[, -1]
+
+
+# for each cell (each column), add cell type information into the colname for later Seurat identification
+sst_colnames <- colnames(sst_L23_couts)
+sst_newcolnames <- paste("Sst_", sst_colnames, sep = "")
+colnames(sst_L23_couts) <- sst_newcolnames
+
+
+pv_colnames <- colnames(pv_L23_couts)
+pv_newcolnames <- paste("Pv_",pv_colnames, sep = "")
+colnames(pv_L23_couts) <- pv_newcolnames
+
+
+
+
+
+```
+\
+
+```{r}
+rawcount_merge <- cbind(sst_L23_couts, pv_L23_couts) # sst first, then pv
+
+
+
+
+# library(Seurat)
+# create seurat object
+sst_pv_seurat <- CreateSeuratObject(counts = rawcount_merge, project = "patchseq_QC", min.cells = 3, min.features = 200)
+
+# get rid of mitochondrial genes, in fact no mitochondrial genes here...
+sst_pv_seurat[["precent.mt"]] <- PercentageFeatureSet(sst_pv_seurat, pattern = "^MT-")
+head(sst_pv_seurat@meta.data)
+
+
+
+```
+
+```{r}
+VlnPlot(sst_pv_seurat, features = c("nFeature_RNA", "nCount_RNA"), ncol = 2, sort = F)
+
+```
+
+```{r}
+plot1 <- FeatureScatter(sst_pv_seurat, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1
+
+# all data used till now are row counts
+
+```
+
+
+
+
+```{r}
+# quality control
+sst_pv_seurat <- subset(sst_pv_seurat, subset = nFeature_RNA > 2000 & nFeature_RNA < 15000)
+# normalization (CPM)
+sst_pv_seurat <- NormalizeData(sst_pv_seurat, normalization.method = "RC", scale.factor = 1e6) # CPM
+
+cpm_sst_pv <- as.data.frame(sst_pv_seurat@assays$RNA@data)
+# no cell is filtered out this time - same cell list can be used for download nwb files
+# some genes are filtered out
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+Look at certain genes for CPM corss validation\
+```{r}
+# cross validation of 
+# Kv.3 related genes: "Kcnc1", "Kcnc2", "Kcnc3", "Kcnc4"
+# Nav.1 related genes: "Scn1a", "Scn2a1", "Scn3a", "Scn4a", "Scn5a", "Scn8a", "Scn9a", "Scn10a", "Scn11a", "Scn1b", 10 genes
+# reference/housekeeping genes: "Rn7sk", "Actb"
+
+cv_cpm <- cpm_sst_pv[c("Kcnc1", "Kcnc2", "Kcnc3", "Kcnc4", "Scn1a", "Scn2a1", "Scn3a", "Scn4a", "Scn5a", "Scn8a", "Scn9a", "Scn10a", "Scn11a", "Scn1b", "Rn7sk", "Actb"),]
+log2_cv_cpm <- log2(cv_cpm+1)
+
+
+```
+
+```{r}
+
+
+# gene annotation
+cv_gene_ann <- data.frame(
+  Gene = factor(rep(c("Kv3_related", "Nav1_related","Reference"), c(4,10,2)))
+)
+rownames(cv_gene_ann) <- rownames(cv_cpm)
+
+# cell type annotation
+cv_celltype_ann <- data.frame(
+  Cell_Type = factor(rep(c("SST","PV"), c(ncol(sst_L23_couts), ncol(pv_L23_couts))))
+)
+rownames(cv_celltype_ann) <- colnames(cv_cpm)
+
+# set annotation color for later heatmap etc.
+ann_colors <- list(
+  Cell_Type = c(SST = "#d2fe99", PV = "#fec599"),
+  Gene = c(Kv3_related = "#ffa64d", Nav1_related = "#cc9aff", Reference = "#4da6ff")
+)
+
+```
+
+
+
+```{r}
+
+pheatmap(log2_cv_cpm, cluster_rows = F, cluster_cols = F, main = "cross validation for log2(CPM+1)", show_colnames = F, gaps_col = ncol(sst_L23_couts), annotation_col = cv_celltype_ann,annotation_row = cv_gene_ann, annotation_colors = ann_colors, show_rownames = F)
+
+```
+
+```{r}
+cv_mean <- cbind(rowMeans(cv_cpm[,1:172]), rowMeans(cv_cpm[,173:217]))
+colnames(cv_mean) <- c("SST", "PV")
+
+pheatmap(log2(cv_mean+1), cluster_rows = F, cluster_cols = F, main = "cross validation, log2[(mean of CPM)+1]", annotation_row = cv_gene_ann, annotation_colors = ann_colors, show_rownames = F)
+
+```
+
+
+
+
+Kv3-related genes show difference between SST and PV, while reference gene Rn7sk and Actb have no differences between cell types.\
+Cross validation succeed. CPM works.\
+
+
+
+```{r}
+# scHeatmap and averageHeatmap for ion channel-related genes
+CaK_cpm <- cpm_sst_pv[c("Kcnn1", "Kcnn2", "Kcnn3", "Cacna1a", "Cacna1b", "Cacna1c", "Cacna1d", "Cacna1e", "Cacna1f", "Cacna1g", "Cacna1h", "Cacna1i", "Rn7sk", "Actb"),]
+log2_CaK_cpm <- log2(CaK_cpm+1)
+
+
+
+# gene annotation
+CaK_gene_ann <- data.frame(
+  Gene = factor(rep(c("Potassium_channel","Calcium_channel", "Reference"), c(3,9,2)))
+)
+rownames(CaK_gene_ann) <- rownames(CaK_cpm)
+
+# cell type annotation
+CaK_celltype_ann <- data.frame(
+  Cell_Type = factor(rep(c("SST","PV"), c(ncol(sst_L23_couts), ncol(pv_L23_couts))))
+)
+rownames(CaK_celltype_ann) <- colnames(CaK_cpm)
+
+
+# set annotation color for later heatmap etc.
+CaK_ann_colors <- list(
+  Cell_Type = c(SST = "#d2fe99", PV = "#fec599"),
+  Gene = c(Potassium_channel = "#ffff4d", Calcium_channel = "#ff4d4d", Reference = "#4da6ff")
+)
+
+
+
+
+```
+
+
+```{r}
+pheatmap(log2_CaK_cpm, cluster_rows = F, cluster_cols = F, main = "log2(CPM+1)", show_colnames = F, gaps_col = ncol(sst_L23_couts), annotation_col = CaK_celltype_ann,annotation_row = CaK_gene_ann, annotation_colors = CaK_ann_colors, show_rownames = T)
+
+```
+
+
+```{r}
+# average of log2(CPM+1) for each cell type
+CaK_mean <- cbind(rowMeans(CaK_cpm[,1:172]), rowMeans(CaK_cpm[,173:217]))
+colnames(CaK_mean) <- c("SST", "PV")
+
+pheatmap(log2(CaK_mean+1), cluster_rows = F, cluster_cols = F, main = "log2[(mean of CPM)+1]", annotation_row = CaK_gene_ann, annotation_colors = CaK_ann_colors, show_rownames = T)
+
+```
+
+
+
+
+
+
+
+
+
+
