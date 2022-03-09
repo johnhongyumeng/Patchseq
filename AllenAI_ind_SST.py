@@ -40,7 +40,7 @@ nwb_filelist = pv_metadata_nwbs[['file_name']]
 n_cells = len(nwb_filelist)
 
 #%% Now plotting for one cell as an example. Later generate a loop to do the job.
-i_cell=14;
+i_cell=6;
 cell_nwb_filename = 'SSTL23/'+nwb_filelist['file_name'][i_cell]
 data_set = create_ephys_data_set(nwb_file = cell_nwb_filename)
 drop_failed_sweeps(data_set)     # The function of these following lines are not making sense to me yet. 
@@ -53,7 +53,7 @@ n_sweep=len(long_square_sweeps.sweeps)
 
 
 #%%  Test on the single spike
-i_sweep=13
+i_sweep=17
 sweep=long_square_sweeps.sweeps[i_sweep]
 t_start, duration, i_amp, _, _ = get_stim_characteristics(sweep.i, sweep.t)
 spfx = SpikeFeatureExtractor(start = t_start, end = (t_start+duration), min_peak = 20,dv_cutoff=15)
@@ -103,3 +103,50 @@ ABC_vec=-fit_y+ (fit_y[-1]+  (fit_y[0]-fit_y[-1])*(1-t_axis))
 rABC=sum(ABC_vec)/len(ABC_vec)/(fit_y[0]-fit_y[-1])*2
 rABC
 
+#%% Try AllenSDK code to extract half-width
+
+from allensdk.ephys.ephys_extractor import EphysSweepFeatureExtractor
+sweep_ext = EphysSweepFeatureExtractor(t=sweep.t, v=sweep.v, i=sweep.i, start=t_start+0.0, end=t_start+duration+0.0)
+sweep_ext.process_spikes()
+#sweep_ext.process(keys="width")
+
+#print("Avg spike threshold: %.01f mV" % sweep_ext.spike_feature("threshold_v").mean())
+print("Avg spike width: %.02f ms" %  (1e3 * np.nanmean(sweep_ext.spike_feature("width"))))
+
+plt.figure(figsize=(12,6))
+plt.plot(sweep.t,sweep.v)
+plt.plot(sweep.t,sweep.i)
+
+#plt.xlim([1.17,1.175])
+#plt.xlim([1.5,2.0])
+
+
+sweep_ext.spike_feature("width")
+np.nanmean(sweep_ext.spike_feature("width"))
+#%% Now let's try to extract input resistance. Seems there isn't a way that just calculate the input resistance.
+# Let me do it. Also for the fitting. Ignoring the sweep selection for now.
+
+flag_dep=(sweep.t>=t_start+duration/2)  & (sweep.t<t_start+duration)
+flag_rest=(sweep.t>=t_start+duration*1.5/2)  & (sweep.t<t_start+2*duration)
+v_dep= sweep.v[flag_dep]
+V_rest= sweep.v[flag_rest]
+R_sweep=(v_dep.mean()-V_rest.mean())/i_amp*1000
+
+
+#%% Fitting the timescale
+flag_relax=(sweep.t>t_start+duration)  & (sweep.t<=t_start+duration+0.1)  # fitting by using the 100 ms.
+ind_all=np.arange(len(sweep.t))
+ind_vec=ind_all[flag_relax]
+t_relax=sweep.t[flag_relax]-(t_start+duration)
+v_relax=sweep.v[flag_relax]-sweep.v[ind_vec[-1]]
+
+At, Kt, Ct = fit_exp_nonlinear(t_relax, v_relax, [-10, -10, 0]) 
+fit_relax= model_func(t_relax,At,Kt,Ct)
+plt.figure(figsize=(6,6))
+plt.plot(t_relax,v_relax)
+plt.plot(t_relax, fit_relax, '-',linewidth=1) 
+plt.ylabel('injection relax' )
+
+Err_fit= np.sqrt(np.mean(np.abs(fit_relax-v_relax)**2) )       
+
+tau_sweep= -1000/Kt

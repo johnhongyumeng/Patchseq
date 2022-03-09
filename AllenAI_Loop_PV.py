@@ -16,6 +16,7 @@ from ipfx.epochs import get_stim_epoch
 from ipfx.stim_features import get_stim_characteristics
 from ipfx.feature_extractor import SpikeFeatureExtractor
 from ipfx import spike_train_features
+from allensdk.ephys.ephys_extractor import EphysSweepFeatureExtractor
 
 import numpy as np
 import pandas as pd
@@ -109,10 +110,20 @@ for i_cell in range(70,n_cells):
     nspike_vec=np.full(n_sweep,np.nan)
     rABC_vec=np.full(n_sweep,np.nan)
     AI_vec= np.full(n_sweep,np.nan)
+    Err_FI_vec= np.full(n_sweep,np.nan)
+    
+    R_vec=np.full(n_sweep,np.nan)
+    Tau_vec=np.full(n_sweep,np.nan)
+    hw_all=np.empty(0)
     
     sweep2=sweep;
     sweep0=long_square_sweeps.sweeps[0]
     sweep1=sweep; 
+    
+    # Initialize the fitting of the passive parameters.
+    At0=-10
+    Kt0=-120
+    Ct0=0
     #%%  Test on the single spike
     for i_sweep in range(n_sweep-1,-1,-1):
         #print(i_sweep)
@@ -147,12 +158,17 @@ for i_cell in range(70,n_cells):
             #plt.plot(t_spike[:-1],FI_vec)
             #plt.plot(t_axis, fit_y, '-',linewidth=1) 
         
-            # get the readout
+            # get the readout, 
             AI_sweep=1-fit_y[-1]/fit_y[0]
             ABC_vec=-fit_y+ (fit_y[-1]+  (fit_y[0]-fit_y[-1])*(1-t_axis))
             rABC=sum(ABC_vec)/len(ABC_vec)/(fit_y[0]-fit_y[-1])*2
             AI_vec[i_sweep]=AI_sweep
             rABC_vec[i_sweep]=rABC
+            
+            #including the error of the fitting now
+            fit_FI=model_func(t_spike[:-1], A, K, C)
+            Err_FI=np.sqrt(np.mean((np.abs(fit_FI-FI_vec)/fit_FI)**2) )
+            Err_FI_vec[i_sweep]=Err_FI
             
             sweep1=sweep
             t_spike_rheo=t_spike[:-1]
@@ -164,12 +180,49 @@ for i_cell in range(70,n_cells):
                 fig=plt.figure(figsize=(6,6))
                 plt.plot(t_spike[:-1],FI_vec)
                 plt.plot(t_axis, fit_y, '-',linewidth=1) 
-                fig.savefig(TempPath+'SampleFit'+'.jpg',bbox_inches='tight')
-    
-             
+                fig.savefig(TempPath+'SampleFit'+'.jpg',bbox_inches='tight')       
+        elif i_amp<0:                
+            flag_dep=(sweep.t>=t_start+duration/2)  & (sweep.t<t_start+duration)
+            flag_rest=(sweep.t>=t_start+duration*1.5/2)  & (sweep.t<t_start+2*duration)
+            v_dep= sweep.v[flag_dep]
+            V_rest= sweep.v[flag_rest]
+            R_sweep=(v_dep.mean()-V_rest.mean())/i_amp*1000
+            R_vec[i_sweep]=R_sweep
+            
+            # Fitting the timescale
+            flag_relax=(sweep.t>t_start+duration)  & (sweep.t<=t_start+duration+0.1)  # fitting by using the 100 ms.
+            ind_all=np.arange(len(sweep.t))
+            ind_vec=ind_all[flag_relax]
+            t_relax=sweep.t[flag_relax]-(t_start+duration)
+            v_relax=sweep.v[flag_relax]-sweep.v[ind_vec[-1]]
+            
+            At, Kt, Ct = fit_exp_nonlinear(t_relax, v_relax, [At0, Kt0, Ct0]) 
+            
+            
+            fit_relax= model_func(t_relax,At,Kt,Ct)
+            Err_fit= np.sqrt(np.mean(np.abs(fit_relax-v_relax)**2) )       
+            if Err_fit< 0.15:
+                At0=At
+                Kt0=Kt
+                Ct0=Ct
+                tau_sweep= -1000/Kt
+                Tau_vec[i_sweep]=tau_sweep    
+            else:
+                print('Warning! Passive fitting error= %.02f too large, skip.' % (Err_fit))    
+    #        plt.figure(figsize=(6,6))
+    #        plt.plot(t_relax,v_relax)
+    #        plt.plot(t_relax, fit_relax, '-',linewidth=1) 
+            
+            
+        if len(t_spike)>0 :
+            sweep_ext = EphysSweepFeatureExtractor(t=sweep.t, v=sweep.v, i=sweep.i, start=t_start+0.0, end=t_start+duration+0.0)
+            sweep_ext.process_spikes()
+            sweep_hw=sweep_ext.spike_feature("width")
+            hw_all=np.append(hw_all,sweep_hw)
+                 
     #%% generate the figure output for each cell
-    fig=plt.figure(figsize=(12, 12))  # Checking for adaptation index.         
-    plt.subplot(311)
+    fig=plt.figure(figsize=(16, 12))  # Checking for adaptation index.         
+    plt.subplot(411)
     plt.plot(I_vec, nspike_vec,'.',markersize=3)
     if cell_flag:
         Rheo, k=  fit_relu(I_vec,nspike_vec,[100,1])   
@@ -180,13 +233,20 @@ for i_cell in range(70,n_cells):
     plt.xlabel('Injection (nA)')
     plt.ylabel('Firing rate (sp/s)')
     
-    plt.subplot(312)
+    plt.subplot(412)
     plt.plot(I_vec, AI_vec)
     plt.ylabel('Adaptation Index')
     
-    plt.subplot(313)
+    plt.subplot(413)
     plt.plot(I_vec, rABC_vec)
     plt.ylabel('ratio of Area_Between_curve')
+    
+    plt.subplot(414)
+    plt.plot(I_vec, R_vec)
+    plt.plot(I_vec, Tau_vec,'.-',markersize=5)
+    
+    plt.ylabel('R and tau')
+
     
     fig.savefig(TempPath+'Summary'+'.jpg',bbox_inches='tight')
     
@@ -216,13 +276,17 @@ for i_cell in range(70,n_cells):
         Output_df.at[i_cell,'Slope']=k
         Output_df.at[i_cell,'maxInj']=I_vec[indout]
         Output_df.at[i_cell,'maxRate']=nspike_vec[indout]
-    
+        Output_df.at[i_cell,'hw']=hw_all.mean()*1e3
+        Output_df.at[i_cell,'R']=np.nanmean(R_vec)
+        Output_df.at[i_cell,'Tau']=np.nanmean(Tau_vec)
+        Output_df.at[i_cell,'AI_err']=Err_FI_vec[indout]
         if (I_vec[indout]>Rheo+100) |(I_vec[indout]>Rheo*1.5) | (nspike_vec[indout]>40):
             Output_df.at[i_cell,'Flag_select']=1
         else:
             Output_df.at[i_cell,'Flag_select']=0    
     else:
         Output_df.at[i_cell,'Flag_select']=0    
+
 
 # Contains the output AI, rABC rheo Slope maxInj maxRate Flag_select
 Output_df.to_csv('Output_df_pv.csv', index=False)
