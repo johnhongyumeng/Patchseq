@@ -1,0 +1,623 @@
+---
+title: "0316_all_layers"
+author: "Yagi"
+date: "2022/3/16"
+output: html_document
+---
+
+```{r}
+rm(list = ls())
+library(xlsx)
+library(ggplot2)
+library(ggsignif)
+library(ggpubr)
+```
+\
+
+
+```{r}
+# organize fitting data from raw output
+
+############################## for PV cells#####################################
+
+## PV cells' output is separated in 2 csv files, labeled a and b here
+## 888 cells in total here, including all layers
+pv_raw_fit_a <- read.csv("Output_df_pv_0314_0_485.csv", header = T, check.names = F)
+pv_raw_fit_b <- read.csv("Output_df_pv_0314_487_end.csv", header = T, check.names = F)
+
+## add index for the output summary and sweep figures
+pv_raw_fit_a <- cbind(c(0:887), pv_raw_fit_a)
+colnames(pv_raw_fit_a)[1] <- "figure_index"
+pv_raw_fit_b <- cbind(c(0:887), pv_raw_fit_b)
+colnames(pv_raw_fit_b)[1] <- "figure_index"
+
+## filter cells with select_flage and maxInj > 1.5*rheobase
+pv_filtered_fit_a <- pv_raw_fit_a[which((pv_raw_fit_a$Flag_select == 1) & (pv_raw_fit_a$maxInj > 1.5*pv_raw_fit_a$rheo)), ]
+pv_filtered_fit_b <- pv_raw_fit_b[which((pv_raw_fit_b$Flag_select == 1) & (pv_raw_fit_b$maxInj > 1.5*pv_raw_fit_b$rheo)), ]
+
+## rbind part a and b together
+pv_filtered_fit <- rbind(pv_filtered_fit_a, pv_filtered_fit_b) # 235 cells
+
+## merge cell's t-type and layer to this table
+pv_metadata_nwbs <- read.csv("0309_pv_metadata_nwbs.csv", header = T, check.names = F)[, -1]
+## only index, structure and T-type_Label are needed to be merged to the fitting output
+pv_index_layer_Ttype <- pv_metadata_nwbs[, c("index", "structure", "T-type_Label")]
+pv_filtered_fit_metadata <- merge(pv_filtered_fit, pv_index_layer_Ttype, by = "index", all.x = T)
+
+```
+\
+```{r}
+######################### now for SST cells#####################################
+
+## SST cells' output is separated in 3 csv files, labeled a, b and c here
+## 1824 cells in total here, including all layers
+sst_raw_fit_a <- read.csv("Output_df_sst_0315_0_600.csv", header = T, check.names = F)
+sst_raw_fit_b <- read.csv("Output_df_sst_0315_600_1200.csv", header = T, check.names = F)
+sst_raw_fit_c <- read.csv("Output_df_sst_0315_1200_end.csv", header = T, check.names = F)
+
+## add index for the output summary and sweep figures
+sst_raw_fit_a <- cbind(c(0:1823), sst_raw_fit_a)
+colnames(sst_raw_fit_a)[1] <- "figure_index"
+sst_raw_fit_b <- cbind(c(0:1823), sst_raw_fit_b)
+colnames(sst_raw_fit_b)[1] <- "figure_index"
+sst_raw_fit_c <- cbind(c(0:1823), sst_raw_fit_c)
+colnames(sst_raw_fit_c)[1] <- "figure_index"
+
+## filter cells with select_flage and maxInj > 1.5*rheobase
+sst_filtered_fit_a <- sst_raw_fit_a[which((sst_raw_fit_a$Flag_select == 1) & (sst_raw_fit_a$maxInj > 1.5*sst_raw_fit_a$rheo)), ]
+sst_filtered_fit_b <- sst_raw_fit_b[which((sst_raw_fit_b$Flag_select == 1) & (sst_raw_fit_b$maxInj > 1.5*sst_raw_fit_b$rheo)), ]
+sst_filtered_fit_c <- sst_raw_fit_c[which((sst_raw_fit_c$Flag_select == 1) & (sst_raw_fit_c$maxInj > 1.5*sst_raw_fit_c$rheo)), ]
+
+## rbind part a, b and c together
+sst_filtered_fit <- rbind(sst_filtered_fit_a, sst_filtered_fit_b, sst_filtered_fit_c) # 766 cells
+
+## merge cell's t-type and layer to this table
+sst_metadata_nwbs <- read.csv("0309_sst_metadata_nwbs.csv", header = T, check.names = F)[, -1]
+## only index, structure and T-type_Label are needed to be merged to the fitting output
+sst_index_layer_Ttype <- sst_metadata_nwbs[, c("index", "structure", "T-type_Label")]
+sst_filtered_fit_metadata <- merge(sst_filtered_fit, sst_index_layer_Ttype, by = "index", all.x = T)
+
+```
+
+
+```{r}
+# violin plot for each cell type
+# layer on x axis and AI or HW on y axis, cell type (PV or SST) labeled in color
+gg_pv <- pv_filtered_fit_metadata[, c("index", "figure_index", "structure", "T-type_Label", "AI", "hw")]
+gg_pv$cell_type <- rep("PV", nrow(gg_pv))
+colnames(gg_pv)[4] <- "T_type_Label"
+
+gg_sst <- sst_filtered_fit_metadata[, c("index", "figure_index", "structure", "T-type_Label", "AI", "hw")]
+gg_sst$cell_type <- rep("SST", nrow(gg_sst))
+colnames(gg_sst)[4] <- "T_type_Label"
+
+gg_pv_sst <- rbind(gg_pv, gg_sst)
+gg_pv_sst$structure <- as.factor(gg_pv_sst$structure)
+gg_pv_sst$`T-type_Label` <- as.factor(gg_pv_sst$`T-type_Label`)
+
+```
+
+
+
+
+
+```{r}
+# VISp subset 
+VISp_region_list <- c("VISp1", "VISp2/3", "VISp4", "VISp5", "VISp6a", "VISp6b")
+gg_VISp_pv_sst <- gg_pv_sst[which(gg_pv_sst$structure %in% VISp_region_list), ] # 808 left
+# layer within VISp subset (6 layers)
+VISp1_pv_sst <- gg_VISp_pv_sst[which(gg_VISp_pv_sst$structure %in% "VISp1"), ] #4
+VISp23_pv_sst <- gg_VISp_pv_sst[which(gg_VISp_pv_sst$structure %in% "VISp2/3"), ] #121
+VISp4_pv_sst <- gg_VISp_pv_sst[which(gg_VISp_pv_sst$structure %in% "VISp4"), ] #90
+VISp5_pv_sst <- gg_VISp_pv_sst[which(gg_VISp_pv_sst$structure %in% "VISp5"), ] #322
+VISp6a_pv_sst <- gg_VISp_pv_sst[which(gg_VISp_pv_sst$structure %in% "VISp6a"), ] #265
+VISp6b_pv_sst <- gg_VISp_pv_sst[which(gg_VISp_pv_sst$structure %in% "VISp6b"), ] #6
+
+```
+
+```{r}
+# some violin plot
+VISp_AI_t_type <- ggplot(gg_VISp_pv_sst, aes(x=structure, y=AI, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.03) + 
+  labs(title = "VISp") +
+  stat_compare_means(aes(group = cell_type))
+
+
+VISp_HW_t_type <- ggplot(gg_VISp_pv_sst, aes(x=structure, y=hw, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.001) + 
+  labs(title = "VISp_hw") +
+  stat_compare_means(aes(group = cell_type))
+
+
+
+```
+
+
+
+
+
+
+
+
+```{r}
+# violin plot
+pv_AI_t_type <- ggplot(gg_pv, aes(x=T_type_Label, y=AI)) + geom_violin() + geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.03) + labs(title = "PV")
+
+# for PV and SST t-types
+pv_sst_AI_t_type <- ggplot(gg_pv_sst, aes(x=T_type_Label, y=AI, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.03) + 
+  labs(title = "T-type for all layer") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.9))
+
+pv_sst_hw_t_type <- ggplot(gg_pv_sst, aes(x=T_type_Label, y=hw, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.001) + 
+  labs(title = "T-type for all layer") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.9))
+
+
+#for VISp
+VISp_pv_sst_AI_t_type <- ggplot(gg_VISp_pv_sst, aes(x=T_type_Label, y=AI, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.03) + 
+  labs(title = "T-type for all layer") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.9))
+
+VISp_pv_sst_hw_t_type <- ggplot(gg_VISp_pv_sst, aes(x=T_type_Label, y=hw, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.001) + 
+  labs(title = "T-type for all layer") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.9))
+
+```
+
+```{r}
+# plot for different T-type within same layer of VISp
+# AI
+VISp_1_pv_sst_AI_t_type <- ggplot(VISp1_pv_sst, aes(x=T_type_Label, y=AI, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.01) + 
+  labs(title = "T-type for VISp1") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.9))
+
+
+VISp_23_pv_sst_AI_t_type <- ggplot(VISp23_pv_sst, aes(x=T_type_Label, y=AI, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.01) + 
+  labs(title = "T-type for VISp2/3") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.9))
+
+VISp_4_pv_sst_AI_t_type <- ggplot(VISp4_pv_sst, aes(x=T_type_Label, y=AI, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.01) + 
+  labs(title = "T-type for VISp4") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.9))
+
+
+VISp_5_pv_sst_AI_t_type <- ggplot(VISp5_pv_sst, aes(x=T_type_Label, y=AI, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.01) + 
+  labs(title = "T-type for VISp5") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.9))
+
+
+VISp_6a_pv_sst_AI_t_type <- ggplot(VISp6a_pv_sst, aes(x=T_type_Label, y=AI, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.01) + 
+  labs(title = "T-type for VISp6a") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.9))
+
+
+VISp_6b_pv_sst_AI_t_type <- ggplot(VISp6b_pv_sst, aes(x=T_type_Label, y=AI, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.01) + 
+  labs(title = "T-type for VISp6b") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.9))
+
+
+```
+
+```{r}
+# hw
+VISp_1_pv_sst_hw_t_type <- ggplot(VISp1_pv_sst, aes(x=T_type_Label, y=hw, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.01) + 
+  labs(title = "T-type for VISp1") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.9))
+
+
+VISp_23_pv_sst_hw_t_type <- ggplot(VISp23_pv_sst, aes(x=T_type_Label, y=hw, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.01) + 
+  labs(title = "T-type for VISp2/3") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.9))
+
+VISp_4_pv_sst_hw_t_type <- ggplot(VISp4_pv_sst, aes(x=T_type_Label, y=hw, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.01) + 
+  labs(title = "T-type for VISp4") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.9))
+
+
+VISp_5_pv_sst_hw_t_type <- ggplot(VISp5_pv_sst, aes(x=T_type_Label, y=hw, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.01) + 
+  labs(title = "T-type for VISp5") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.9))
+
+
+VISp_6a_pv_sst_hw_t_type <- ggplot(VISp6a_pv_sst, aes(x=T_type_Label, y=hw, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.01) + 
+  labs(title = "T-type for VISp6a") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.9))
+
+
+VISp_6b_pv_sst_hw_t_type <- ggplot(VISp6b_pv_sst, aes(x=T_type_Label, y=hw, fill = cell_type)) + 
+  geom_violin() + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center', position = position_dodge(1), binwidth = 0.01) + 
+  labs(title = "T-type for VISp6b") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.9))
+
+
+
+```
+
+
+
+
+```{r}
+# extract AI outlier from gg_VISp_pv_sst to check their output summary figures
+AI_VISp_outlier_pv_sst <- gg_VISp_pv_sst[which((gg_VISp_pv_sst$AI >1) | (gg_VISp_pv_sst$AI < 0)), ]
+write.csv(AI_VISp_outlier_pv_sst, "0323_AI_VISp_outlier_pv_sst.csv")
+
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+from previous script (today is 0316)
+```{r}
+# cpm counts
+cpm_sst_pv <- read.csv("0118_CPM_L23_sst_pv.csv", header = T, check.names = F, row.names = 1)
+
+# pv cells' fitting output, only pick cells whose Flag_select = 1
+# rewrite on 0202, select all PV cells according to new version of ephy output provided by John
+# file name: 0202_AllenResults.xlsx
+# subtable: Outputdf_PV
+#pv_fit_output_analyzed <- read.xlsx("0202_AllenResults.xlsx", sheetIndex = 4, colIndex = 2:14)
+
+# for selected cells (flag = 1)
+pv_fit_output_analyzed <- read.xlsx("0202_AllenResults.xlsx", sheetIndex = 5, colIndex = 2:14)
+
+
+# sst cells' fitting output, only pick cells whose Flag_select = 1
+# rewrite on 0202, select all PV cells according to new version of ephy output provided by John
+# file name: 0202_AllenResults.xlsx
+# subtable: Outputdf_SST
+sst_fit_output_analyzed <- read.xlsx("0202_AllenResults.xlsx", sheetIndex = 8, colIndex = 2:14)
+
+# for selected cells (flag = 1)
+sst_fit_output_analyzed <- read.xlsx("0202_AllenResults.xlsx", sheetIndex = 9, colIndex = 2:14)
+
+
+# pv cell's metadata
+pv_metadata_nwbs <- read.csv("L23_pv_metadata_nwbs.csv", header = T, check.names = F)[,-1]
+
+# sst cell's metadata
+sst_metadata_nwbs <- read.csv("L23_sst_metadata_nwbs.csv", header = T, check.names = F)[,-1]
+
+```
+
+
+```{r}
+# transpose the cpm matrix for later merge
+t_cpm_sst_pv <- t(cpm_sst_pv)
+t_cpm_sst_pv <- cbind(rownames(t_cpm_sst_pv), t_cpm_sst_pv)
+colnames(t_cpm_sst_pv)[1] <- "transcriptomics_sample_id"
+
+
+
+
+```
+
+
+
+```{r}
+# merge for pv and sst cells separately
+
+# for pv cells:
+pv_index_tid <- pv_metadata_nwbs[, c("index", "transcriptomics_sample_id")]
+pv_index_tid_cpm <- merge(pv_index_tid, t_cpm_sst_pv, by = 'transcriptomics_sample_id', all.x = T)
+pv_fit_cpm <- merge(pv_fit_output_analyzed, pv_index_tid_cpm, by = 'index', all.x = T)
+
+
+# for sst cells:
+sst_index_tid <- sst_metadata_nwbs[, c("index", "transcriptomics_sample_id")]
+sst_index_tid_cpm <- merge(sst_index_tid, t_cpm_sst_pv, by = 'transcriptomics_sample_id', all.x = T)
+sst_fit_cpm <- merge(sst_fit_output_analyzed, sst_index_tid_cpm, by = 'index', all.x = T)
+
+
+```
+
+
+```{r}
+# correlation between cpm and AI
+
+# for pv cells:
+cor_pv <- as.data.frame(matrix(nrow = dim(cpm_sst_pv)[1], ncol = 5))
+colnames(cor_pv) <- c("gene_name", "pv_cor_cpm_AI", "pv_cor_cpm_AI_pvalue", "pv_cor_cpm_HW", "pv_cor_cpm_HW_pvalue")
+rownames(cor_pv) <- rownames(cpm_sst_pv)
+cor_pv[, "gene_name"] <- rownames(cpm_sst_pv)
+
+for(i in 1:dim(cpm_sst_pv)[1]) {
+  cor_text_AI_i <- cor.test(pv_fit_cpm[, "AI"], as.numeric(pv_fit_cpm[, cor_pv[i, "gene_name"]]), method = "spearman", exact = F)
+  
+  cor_pv[i, "pv_cor_cpm_AI"] <- cor_text_AI_i$estimate
+  cor_pv[i, "pv_cor_cpm_AI_pvalue"] <- cor_text_AI_i$p.value
+  
+  
+  cor_text_HW_i <- cor.test(pv_fit_cpm[, "hw"], as.numeric(pv_fit_cpm[, cor_pv[i, "gene_name"]]), method = "spearman", exact = F)
+  
+  cor_pv[i, "pv_cor_cpm_HW"] <- cor_text_HW_i$estimate
+  cor_pv[i, "pv_cor_cpm_HW_pvalue"] <- cor_text_HW_i$p.value
+}
+
+##### pearson correlation is for two Gaussian distribution's correlation #####
+##### use spearman correlation instead #####
+
+```
+
+
+
+```{r}
+# same for sst cells:
+cor_sst <- as.data.frame(matrix(nrow = dim(cpm_sst_pv)[1], ncol = 5))
+colnames(cor_sst) <- c("gene_name", "sst_cor_cpm_AI", "sst_cor_cpm_AI_pvalue", "sst_cor_cpm_HW", "sst_cor_cpm_HW_pvalue")
+rownames(cor_sst) <- rownames(cpm_sst_pv)
+cor_sst[, "gene_name"] <- rownames(cpm_sst_pv)
+
+for(i in 1:dim(cpm_sst_pv)[1]) {
+  
+  cor_text_AI_i <- cor.test(sst_fit_cpm[, "AI"], as.numeric(sst_fit_cpm[, cor_sst[i, "gene_name"]]), method = "spearman", exact = F)
+  
+  cor_sst[i, "sst_cor_cpm_AI"] <- cor_text_AI_i$estimate
+  cor_sst[i, "sst_cor_cpm_AI_pvalue"] <- cor_text_AI_i$p.value
+  
+  
+  cor_text_HW_i <- cor.test(sst_fit_cpm[, "hw"], as.numeric(sst_fit_cpm[, cor_sst[i, "gene_name"]]), method = "spearman", exact = F)
+  
+  cor_sst[i, "sst_cor_cpm_HW"] <- cor_text_HW_i$estimate
+  cor_sst[i, "sst_cor_cpm_HW_pvalue"] <- cor_text_HW_i$p.value
+}
+
+
+```
+
+
+```{r}
+# save as xlsx file
+write.xlsx(cor_pv, "0301_L23_pv_cpm_AI_hw_cor.xlsx", sheetName = "PV_Pearson_cor", col.names = T, row.names = T)
+write.xlsx(cor_sst, "0301_L23_sst_cpm_AI_hw_cor.xlsx", sheetName = "SST_Pearson_cor", col.names = T, row.names = T)
+
+
+
+
+```
+
+```{r}
+cor_pv_AI_select <- cor_pv[which(cor_pv$pv_cor_cpm_AI_pvalue <= 0.05), ]
+cor_pv_HW_select <- cor_pv[which(cor_pv$pv_cor_cpm_HW_pvalue <= 0.05), ]
+
+pv_order_AI <- order(cor_pv_AI_select$pv_cor_cpm_AI)
+pv_ordered_gene_AI <- cor_pv_AI_select[pv_order_AI, c(1,2,3)]
+# delete NA
+pv_ordered_gene_AI <- na.omit(pv_ordered_gene_AI)
+
+pv_order_HW <- order(cor_pv_HW_select$pv_cor_cpm_HW)
+pv_ordered_gene_HW <- cor_pv_HW_select[pv_order_HW, c(1,4,5)]
+# delete NA
+pv_ordered_gene_HW <- na.omit(pv_ordered_gene_HW)
+```
+
+```{r}
+###
+
+cor_sst_AI_select <- cor_sst[which(cor_sst$sst_cor_cpm_AI_pvalue <= 0.05), ]
+cor_sst_HW_select <- cor_sst[which(cor_sst$sst_cor_cpm_HW_pvalue <= 0.05), ]
+
+sst_order_AI <- order(cor_sst_AI_select$sst_cor_cpm_AI)
+sst_ordered_gene_AI <- cor_sst_AI_select[sst_order_AI, c(1,2,3)]
+# delete NA
+sst_ordered_gene_AI <- na.omit(sst_ordered_gene_AI)
+
+sst_order_HW <- order(cor_sst_HW_select$sst_cor_cpm_HW)
+sst_ordered_gene_HW <- cor_sst_HW_select[sst_order_HW, c(1,4,5)]
+# delete NA
+sst_ordered_gene_HW <- na.omit(sst_ordered_gene_HW)
+
+
+```
+
+
+```{r}
+# order the pearson correlation for each cell type and each 
+#pv_order_AI <- order(cor_pv$pv_cor_cpm_AI)
+#pv_ordered_gene_AI <- cor_pv[pv_order_AI, c(1,2)]
+# delete NA
+#pv_ordered_gene_AI <- na.omit(pv_ordered_gene_AI)
+
+#pv_order_HW <- order(cor_pv$pv_cor_cpm_HW)
+#pv_ordered_gene_HW <- cor_pv[pv_order_HW, c(1,3)]
+# delete NA
+#pv_ordered_gene_HW <- na.omit(pv_ordered_gene_HW)
+
+# then get list for the top 2.5% (754) and bottom 2.5%
+# then get list for the top 25 and bottom 25
+top_cor_pv_AI <- pv_ordered_gene_AI[c(1:25, (nrow(pv_ordered_gene_AI)-25):nrow(pv_ordered_gene_AI)), ]
+top_cor_pv_HW <- pv_ordered_gene_HW[c(1:25, (nrow(pv_ordered_gene_HW)-25):nrow(pv_ordered_gene_HW)), ]
+
+
+# order the pearson correlation for each cell type and each 
+#sst_order_AI <- order(cor_sst$sst_cor_cpm_AI)
+#sst_ordered_gene_AI <- cor_sst[sst_order_AI, c(1,2)]
+# delete NA
+#sst_ordered_gene_AI <- na.omit(sst_ordered_gene_AI)
+
+
+#sst_order_HW <- order(cor_sst$sst_cor_cpm_HW)
+#sst_ordered_gene_HW <- cor_sst[sst_order_HW, c(1,3)]
+# delet NA
+#sst_ordered_gene_HW <- na.omit(sst_ordered_gene_HW)
+
+
+# then get list for the top 2.5% (754) and bottom 2.5%
+# then get list for the top 25 and bottom 25
+top_cor_sst_AI <- sst_ordered_gene_AI[c(1:25, (nrow(sst_ordered_gene_AI)-25):nrow(sst_ordered_gene_AI)), ]
+top_cor_sst_HW <- sst_ordered_gene_HW[c(1:25, (nrow(sst_ordered_gene_HW)-25):nrow(sst_ordered_gene_HW)), ]
+
+```
+
+
+
+```{r}
+# save as xlsx file
+write.xlsx(top_cor_pv_AI, "0301_L23_pv_cpm_top_cor.xlsx", sheetName = "PV_cpm_AI", col.names = T, row.names = T)
+write.xlsx(top_cor_pv_HW, "0301_L23_pv_cpm_top_cor.xlsx", sheetName = "PV_cpm_HW", col.names = T, row.names = T, append = T)
+
+
+write.xlsx(top_cor_sst_AI, "0301_L23_sst_cpm_top_cor.xlsx", sheetName = "SST_cpm_AI", col.names = T, row.names = T)
+write.xlsx(top_cor_sst_HW, "0301_L23_sst_cpm_top_cor.xlsx", sheetName = "SST_cpm_HW", col.names = T, row.names = T, append = T)
+
+
+
+```
+
+```{r}
+library(clusterProfiler)
+library(org.Mm.eg.db)
+library(xlsx)
+
+```
+
+
+```{r}
+# demo
+# GO enrichment
+# for pv cells, AI related top genes
+
+# get ENTREZID
+entrez_id_pv_AI <- bitr(top_cor_pv_AI$gene_name, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = "org.Mm.eg.db")
+
+# CC
+pv_AI_GO_CC <- enrichGO(
+  gene = as.character(entrez_id_pv_AI$ENTREZID),
+  keyType = "ENTREZID",
+  OrgDb = org.Mm.eg.db,
+  ont = "CC",
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.01,
+  qvalueCutoff = 0.05,
+  readable = TRUE
+)
+
+```
+
+
+
+```{r}
+
+# a function for this step, put in top_cor_celltype_ephy and save enrichment result in xlsx files.
+top_dataframe_to_GO_enrichment <- function(top_cor_celltype_ephy, cell_type, ephy_para) {
+  enter_id <- bitr(top_cor_celltype_ephy$gene_name, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = "org.Mm.eg.db")
+  
+  # CC
+  GO_CC <- enrichGO(
+    gene = enter_id$ENTREZID,
+    keyType = "ENTREZID",
+    OrgDb = org.Mm.eg.db,
+    ont = "CC",
+    pAdjustMethod = "BH",
+    pvalueCutoff = 0.01,
+    qvalueCutoff = 0.05,
+    readable = TRUE
+  )
+  write.xlsx(GO_CC@result, paste("0203_GOenrichment_", cell_type, "_", ephy_para, ".xlsx", sep = ""), sheetName = "Cellcular_Component", col.names = T, row.names = T, append = T)
+  
+  # MF
+  GO_MF <- enrichGO(
+    gene = enter_id$ENTREZID,
+    keyType = "ENTREZID",
+    OrgDb = org.Mm.eg.db,
+    ont = "MF",
+    pAdjustMethod = "BH",
+    pvalueCutoff = 0.01,
+    qvalueCutoff = 0.05,
+    readable = TRUE
+  )
+  write.xlsx(GO_MF@result, paste("0203_GOenrichment_", cell_type, "_", ephy_para, ".xlsx", sep = ""), sheetName = "Molecular_Function", col.names = T, row.names = T, append = T)
+  
+  # BP
+  GO_BP <- enrichGO(
+    gene = enter_id$ENTREZID,
+    keyType = "ENTREZID",
+    OrgDb = org.Mm.eg.db,
+    ont = "BP",
+    pAdjustMethod = "BH",
+    pvalueCutoff = 0.01,
+    qvalueCutoff = 0.05,
+    readable = TRUE
+  )
+  write.xlsx(GO_CC@result, paste("0203_GOenrichment_", cell_type, "_", ephy_para, ".xlsx", sep = ""), sheetName = "Biological_Process", col.names = T, row.names = T, append = T)
+  
+}
+
+
+```
+
+
+```{r}
+# test the function
+top_dataframe_to_GO_enrichment(top_cor_pv_AI, cell_type = "PV", ephy_para = "AI")
+
+
+```
+
+```{r}
+# the rest GO enrichment results
+top_dataframe_to_GO_enrichment(top_cor_pv_HW, cell_type = "PV", ephy_para = "HW")
+top_dataframe_to_GO_enrichment(top_cor_sst_AI, cell_type = "SST", ephy_para = "AI")
+top_dataframe_to_GO_enrichment(top_cor_sst_HW, cell_type = "SST", ephy_para = "HW")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
