@@ -1,0 +1,1186 @@
+---
+title: "0406_L23_new_hw_thesis"
+author: "Yagi"
+date: "2022/4/6"
+output: html_document
+---
+
+```{r}
+rm(list = ls())
+```
+
+```{r}
+library(xlsx)
+library(ggplot2)
+library(ggsignif)
+library(ggpubr)
+library(Seurat)
+library(pheatmap)
+library(ggrepel)
+library(cowplot)
+```
+
+
+
+```{r}
+# read in previous ephy fitting output for adaptation index (AI)
+
+# organize fitting data from raw output (generated in 03/2022)
+
+############################## for PV cells#####################################
+
+## PV cells' output is separated in 2 csv files, labeled a and b here
+## 888 cells in total here, including all layers
+pv_raw_fit_a <- read.csv("Output_df_pv_0314_0_485.csv", header = T, check.names = F)
+pv_raw_fit_b <- read.csv("Output_df_pv_0314_487_end.csv", header = T, check.names = F)
+
+## add index for the output summary and sweep figures
+pv_raw_fit_a <- cbind(c(0:887), pv_raw_fit_a)
+colnames(pv_raw_fit_a)[1] <- "figure_index"
+pv_raw_fit_b <- cbind(c(0:887), pv_raw_fit_b)
+colnames(pv_raw_fit_b)[1] <- "figure_index"
+
+## filter cells with select_flage and maxInj > 1.5*rheobase
+pv_filtered_fit_a <- pv_raw_fit_a[which((pv_raw_fit_a$Flag_select == 1) & (pv_raw_fit_a$maxInj > 1.5*pv_raw_fit_a$rheo)), ]
+pv_filtered_fit_b <- pv_raw_fit_b[which((pv_raw_fit_b$Flag_select == 1) & (pv_raw_fit_b$maxInj > 1.5*pv_raw_fit_b$rheo)), ]
+
+## rbind part a and b together
+pv_filtered_AI_fit <- rbind(pv_filtered_fit_a, pv_filtered_fit_b) # 235 cells
+# delete cells whose AI >= 1
+pv_filtered_AI_fit <- pv_filtered_AI_fit[which(pv_filtered_AI_fit$AI < 1), ]
+pv_filtered_AI_fit$cell_type <- rep("PV", nrow(pv_filtered_AI_fit))
+
+
+######################### now for SST cells#####################################
+
+## SST cells' output is separated in 3 csv files, labeled a, b and c here
+## 1824 cells in total here, including all layers
+sst_raw_fit_a <- read.csv("Output_df_sst_0315_0_600.csv", header = T, check.names = F)
+sst_raw_fit_b <- read.csv("Output_df_sst_0315_600_1200.csv", header = T, check.names = F)
+sst_raw_fit_c <- read.csv("Output_df_sst_0315_1200_end.csv", header = T, check.names = F)
+
+## add index for the output summary and sweep figures
+sst_raw_fit_a <- cbind(c(0:1823), sst_raw_fit_a)
+colnames(sst_raw_fit_a)[1] <- "figure_index"
+sst_raw_fit_b <- cbind(c(0:1823), sst_raw_fit_b)
+colnames(sst_raw_fit_b)[1] <- "figure_index"
+sst_raw_fit_c <- cbind(c(0:1823), sst_raw_fit_c)
+colnames(sst_raw_fit_c)[1] <- "figure_index"
+
+## filter cells with select_flage and maxInj > 1.5*rheobase
+sst_filtered_fit_a <- sst_raw_fit_a[which((sst_raw_fit_a$Flag_select == 1) & (sst_raw_fit_a$maxInj > 1.5*sst_raw_fit_a$rheo)), ]
+sst_filtered_fit_b <- sst_raw_fit_b[which((sst_raw_fit_b$Flag_select == 1) & (sst_raw_fit_b$maxInj > 1.5*sst_raw_fit_b$rheo)), ]
+sst_filtered_fit_c <- sst_raw_fit_c[which((sst_raw_fit_c$Flag_select == 1) & (sst_raw_fit_c$maxInj > 1.5*sst_raw_fit_c$rheo)), ]
+
+## rbind part a, b and c together
+sst_filtered_AI_fit <- rbind(sst_filtered_fit_a, sst_filtered_fit_b, sst_filtered_fit_c) # 766 cells
+# delete cells whose AI >= 1
+sst_filtered_AI_fit <- sst_filtered_AI_fit[which(sst_filtered_AI_fit$AI < 1), ]
+sst_filtered_AI_fit$cell_type <- rep("SST", nrow(sst_filtered_AI_fit))
+
+
+```
+
+
+```{r}
+# read in new version of HW (generated in 04/2022)
+pv_04hw_fit <- read.csv("0403_df_allPV.csv", header = T, check.names = F)[, 10:21]
+pv_04hw_fit$cell_type <- rep("PV", nrow(pv_04hw_fit))
+colnames(pv_04hw_fit)[c(1, 11, 12)] <- c("figure_index", "04hw_R", "04hw_Tau")
+
+sst_04hw_fit <- read.csv("0403_df_allSST.csv", header = T, check.names = F)[, 16:27]
+sst_04hw_fit$cell_type <- rep("SST", nrow(sst_04hw_fit))
+colnames(sst_04hw_fit)[c(1, 11, 12)] <- c("figure_index", "04hw_R", "04hw_Tau")
+
+```
+
+
+```{r}
+# AI's and HW's quality control should be separated as two independent part
+
+# L2/3 pv cell's metadata
+pv_L23_metadata_nwbs <- read.csv("L23_pv_metadata_nwbs.csv", header = T, check.names = F)[,-1]
+# L2/3 sst cell's metadata
+sst_L23_metadata_nwbs <- read.csv("L23_sst_metadata_nwbs.csv", header = T, check.names = F)[,-1]
+
+# read L2/3 cpm matrix and transpose for latter merging
+cpm_L23_sst_pv <- read.csv("0118_CPM_L23_sst_pv.csv", header = T, check.names = F, row.names = 1)
+t_cpm_L23_sst_pv <- t(cpm_L23_sst_pv)
+t_cpm_L23_sst_pv <- cbind(rownames(t_cpm_L23_sst_pv), t_cpm_L23_sst_pv)
+colnames(t_cpm_L23_sst_pv)[1] <- "transcriptomics_sample_id"
+t_cpm_L23_sst_pv <- as.data.frame(t_cpm_L23_sst_pv, stringsAsFactors = F)
+t_cpm_L23_sst_pv[, 2:ncol(t_cpm_L23_sst_pv)] <- as.data.frame(lapply(t_cpm_L23_sst_pv[, 2:ncol(t_cpm_L23_sst_pv)], as.numeric))
+
+
+```
+
+
+
+```{r}
+# HW first, create data frame for L2/3 cells separately
+
+# merge L2/3 pv cell's CPM and HW fitting output
+pv_L23_index_tid <- pv_L23_metadata_nwbs[, c("index", "transcriptomics_sample_id")]
+pv_L23_index_tid_cpm <- merge(pv_L23_index_tid, t_cpm_L23_sst_pv, by = 'transcriptomics_sample_id', all.x = T)
+pv_L23_04hw_cpm <- merge(pv_04hw_fit, pv_L23_index_tid_cpm, by = 'index', all.y = T)
+
+sst_L23_index_tid <- sst_L23_metadata_nwbs[, c("index", "transcriptomics_sample_id")]
+sst_L23_index_tid_cpm <- merge(sst_L23_index_tid, t_cpm_L23_sst_pv, by = 'transcriptomics_sample_id', all.x = T)
+sst_L23_04hw_cpm <- merge(sst_04hw_fit, sst_L23_index_tid_cpm, by = 'index', all.y = T)
+
+# save merged hw fitting and cpm as csv files!
+# write.csv(pv_L23_04hw_cpm, "0409_pv_L23_04hw_cpm.csv")
+# write.csv(sst_L23_04hw_cpm, "0409_sst_L23_04hw_cpm.csv")
+
+# rbind pv and sst cells together with a column labeling cell tyep for later cell type drive/non-cell type-driven model
+pv_sst_L23_04hw_cpm <- rbind(pv_L23_04hw_cpm, sst_L23_04hw_cpm)
+# remove cells whose HW == NA
+pv_sst_L23_04hw_cpm <- pv_sst_L23_04hw_cpm[which(!is.na(pv_sst_L23_04hw_cpm$HW)), ]
+# write.csv(pv_sst_L23_04hw_cpm, "0409_pv_sst_L23_04hw_cpm.csv")
+
+```
+
+
+
+```{r}
+# then AI, cells are filtered for AI so when merge L2/3 cpm matrix with AI, all=F
+pv_L23_AI_cpm <- merge(pv_filtered_AI_fit, pv_L23_index_tid_cpm, by = 'index', all = F)
+sst_L23_AI_cpm <- merge(sst_filtered_AI_fit, sst_L23_index_tid_cpm, by = 'index', all = F)
+# rbind pv and sst cells
+pv_sst_L23_AI_cpm <- rbind(pv_L23_AI_cpm, sst_L23_AI_cpm)
+# remove cells whose AI == NA
+# no cells in the current datafram has AI == NA, skip this step
+# remember to delete cells whose AI is larger than 1
+# write.csv(pv_sst_L23_AI_cpm, "0409_pv_sst_L23_AI_cpm.csv")
+
+
+
+```
+
+
+```{r}
+# before lm and anova comparison, plot the violin plot of AI and HW between PV and SSt cells with t.test labels
+
+violin_df_04hw <- pv_sst_L23_04hw_cpm[, c('index', 'HW', 'cell_type')]
+violin_df_04hw$ephy <- rep("HW", nrow(violin_df_04hw))
+colnames(violin_df_04hw)[2] <- "ephy_value"
+violin_df_AI <- pv_sst_L23_AI_cpm[, c('index', 'AI', 'cell_type')]
+violin_df_AI$ephy <- rep("AI", nrow(violin_df_AI))
+colnames(violin_df_AI)[2] <- "ephy_value"
+# merge while keep all cells
+violin_df_04hw_AI <- rbind(violin_df_04hw, violin_df_AI)
+violin_df_04hw_AI <- violin_df_04hw_AI[which(!is.na(violin_df_04hw_AI$ephy_value)), ]
+
+ggplot(violin_df_04hw_AI, aes(x = ephy, y = ephy_value, fill = cell_type)) + geom_violin() + #stat_compare_means(aes(group = cell_type)) + 
+   geom_jitter(position = position_jitterdodge(dodge.width = 1, jitter.width = 0.3), size = 0.85) + 
+  stat_compare_means(aes(group = cell_type))
+  # geom_jitter(binaxis = 'y', stackdir = 'center', position = position_dodge(0.9), binwidth = 0.008)
+
+ggplot(violin_df_04hw_AI, aes(x = ephy, y = ephy_value, color = cell_type)) + geom_jitter(position = position_jitterdodge(jitter.width = 0.05))
+
+
+```
+
+```{r}
+violin_plot_HW <- ggplot(violin_df_04hw, aes(x = ephy, y = ephy_value, fill = cell_type)) + geom_violin() + 
+  geom_jitter(position = position_jitterdodge(dodge.width = 1, jitter.width = 0.3), size = 0.85) + 
+  stat_compare_means(aes(group = cell_type)) + 
+  labs(title = "Half-width", 
+       subtitle = expression(paste("n"["PV"], "=143; ", "n"["SST"], "=169")), 
+       x = " ", y = "half-width (ms)")
+
+
+violin_plot_HW
+
+```
+
+
+```{r}
+violin_plot_AI <- ggplot(violin_df_AI, aes(x = ephy, y = ephy_value, fill = cell_type)) + geom_violin() + 
+  geom_jitter(position = position_jitterdodge(dodge.width = 1, jitter.width = 0.3), size = 0.85) + 
+  stat_compare_means(aes(group = cell_type)) + 
+  labs(title = "Adaptation index", 
+       subtitle = expression(paste("n"["PV"], "=31; ", "n"["SST"], "=88")), 
+       x = " ", y = "adaptation index")
+
+
+violin_plot_AI
+
+```
+
+
+```{r}
+plot_grid(violin_plot_HW+theme(legend.position = 'none'), 
+          violin_plot_AI+theme(legend.position = 'none'), 
+          labels = c("A", "B"), ncol = 2)
+
+```
+
+
+
+
+
+```{r}
+# a scatter plot of AI ~ HW
+df_AI_04hw <- merge(violin_df_AI, violin_df_04hw, by = "index", all = F)[, c(1,2,5,6)]
+colnames(df_AI_04hw) <- c("index", "AI", "HW", "cell_type")
+
+ggplot(df_AI_04hw, aes(x = HW, y = AI, color = cell_type)) + geom_point() + 
+  labs(title = "AI ~ HW", x = "half-width (ms)", y = "Adaptation Index")
+
+```
+
+```{r}
+lm_AI_hw <- lm(AI~HW, data = df_AI_04hw)
+summary_lm_AI_hw <- summary(lm_AI_hw)
+
+lm_AI_ct <- lm(AI~cell_type, data = df_AI_04hw)
+summayr_lm_AI_ct <- summary(lm_AI_ct)
+
+lm_AI_hw_ct <- lm(AI~HW+cell_type, data = df_AI_04hw)
+summary_lm_AI_hw_ct <- summary(lm_AI_hw_ct)
+```
+
+
+```{r}
+summary_lm_AI_hw
+```
+
+```{r}
+summary_lm_AI_ct
+```
+
+
+```{r}
+anova(lm_AI_hw, lm_AI_hw_ct)
+```
+
+```{r}
+anova(lm_AI_ct, lm_AI_hw_ct)
+
+```
+
+
+
+
+
+
+
+
+```{r}
+# select genes from cpm counts
+## potassium
+## "Kcnn1", "Kcnn2", "Kcnn3", 3 genes
+
+## Kv3. related genes (also used in cross validation before), added on 0202
+## "Kcnc1", "Kcnc2", "Kcnc3", "Kcnc4", 4 genes
+
+## sodium
+## "Scn1a", "Scn2a1", "Scn3a", "Scn4a", "Scn5a", "Scn8a", "Scn9a", "Scn10a", "Scn11a", "Scn1b", 10 genes
+
+## calcium
+## "Cacna1a", "Cacna1b", "Cacna1c", "Cacna1d", "Cacna1e", "Cacna1f", "Cacna1g", "Cacna1h", "Cacna1i", 9 genes
+
+## gene marker
+## "Pvalb", "Sst"
+
+## house keeping gene (added on 0202) - may not add for thesis
+##"Rn7sk", "Actb", 2 genes
+
+## additional genes from Shreejoy's paper (added on 0228) - not for thesis
+## "Daam1", "Med23", "Nphp4", "Rab33a", 4 genes
+
+
+channel_pv_sst_L23_04hw_cpm <- pv_sst_L23_04hw_cpm[, c("index", "figure_index", "HW", "cell_type", 
+                                                       "Kcnn1", "Kcnn2", "Kcnn3", 
+                                                       "Kcnc1", "Kcnc2", "Kcnc3", "Kcnc4", 
+                                                       "Scn1a", "Scn2a1", "Scn3a", "Scn4a", "Scn5a", "Scn8a", "Scn9a", "Scn10a", "Scn11a", "Scn1b", 
+                                                       "Cacna1a", "Cacna1b", "Cacna1c", "Cacna1d", "Cacna1e", "Cacna1f", "Cacna1g", "Cacna1h", "Cacna1i", 
+                                                       "Rn7sk", "Actb")]
+
+channel_pv_sst_L23_AI_cpm <- pv_sst_L23_AI_cpm[, c("index", "figure_index", "AI", "cell_type", 
+                                                   "Kcnn1", "Kcnn2", "Kcnn3", 
+                                                   "Kcnc1", "Kcnc2", "Kcnc3", "Kcnc4", 
+                                                   "Scn1a", "Scn2a1", "Scn3a", "Scn4a", "Scn5a", "Scn8a", "Scn9a", "Scn10a", "Scn11a", "Scn1b", 
+                                                   "Cacna1a", "Cacna1b", "Cacna1c", "Cacna1d", "Cacna1e", "Cacna1f", "Cacna1g", "Cacna1h", "Cacna1i", 
+                                                   "Rn7sk", "Actb")]
+
+
+# a function to reorganize the matrix for log2(average_CPM+1) pheatmap for two cell types
+# cell type in columns and log2(average_CPM+1) for each gene in rows
+
+redf_channel_pv_sst_ephy_logcpm <- function(channel_pv_sst_ephy_cpm) {
+  
+  # subset data
+  channel_pv <- channel_pv_sst_ephy_cpm[which(channel_pv_sst_ephy_cpm$cell_type == "PV"), ]
+  channel_sst <- channel_pv_sst_ephy_cpm[which(channel_pv_sst_ephy_cpm$cell_type == "SST"), ]
+  
+  # calculate average CPM for each gene
+  channel_pv_col_mean <- colMeans(channel_pv[, 5:32]) 
+  channel_sst_col_mean <- colMeans(channel_sst[, 5:32])
+  channel_pv_sst_mean_cpm <- rbind(channel_pv_col_mean, channel_sst_col_mean)
+  rownames(channel_pv_sst_mean_cpm) <- c("PV", "SST")
+  
+  redf_logmean <- t(log2(channel_pv_sst_mean_cpm+1))
+  return(redf_logmean)
+}
+
+df_pheatmap_pv_sst_04hw_logcpm <- redf_channel_pv_sst_ephy_logcpm(channel_pv_sst_L23_04hw_cpm)
+df_pheatmap_pv_sst_AI_logcpm <- redf_channel_pv_sst_ephy_logcpm(channel_pv_sst_L23_AI_cpm)
+
+
+annotation_gene_channel <- data.frame(
+  Ion_Channel = factor(rep(c("SK", "Kv3", "Nav", "Cav", "Reference_gene"), c(3,4,10,9,2)))
+)
+rownames(annotation_gene_channel) <- rownames(df_pheatmap_pv_sst_04hw_logcpm)
+
+# set annotation color for later heatmap etc.
+ann_colors <- list(
+  Ion_Channel = c(SK = "#eb706d", Kv3 = "#ebaf6d", Nav = "#c4f19a", Cav = "#c79af1", Reference_gene = "#9ac4f1")
+)
+
+pheatmap(df_pheatmap_pv_sst_04hw_logcpm, cluster_cols = F, cluster_rows = F, annotation_row = annotation_gene_channel, annotation_colors = ann_colors, main = "log2(CPM+1)", angle_col = 0, 
+         gaps_row = c(3,7,17,26),
+         labels_row = c("SK1 (Kcnn1)", "SK2 (Kcnn2)", "SK3 (Kcnn3)", 
+                        "Kv3.1 (Kcnc1)", "Kv3,2 (Kcnc2)", "Kv3.3 (Kcnc3)", "Kv3.4 (Kcnc4)", 
+                        "Nav1,1 (Scn1a)", "Nav1,2a (Scn2a1)", "Nav1.3a (Scn3a)", "Nav1.4a (Scn4a)", "Nav1.5a (Scn5a)", "Nav1,6a (Scn8a)", "Nav1,7a (Scn9a)", "Nav1.8a (Scn10a)", "Nav1.9a (Scn11a)", "Nav1.1b (Scn1b)", 
+                        "Cav2.1 (Cacna1a)", "Cav2,2 (Cacna1b)", "Cav1.2 (Cacna1c)", "Cav1.3 (Cacna1d)", "Cav2.3 (Cacna1e)", "Cav1.4 (Cacna1f)", "Cav3.1 (Cacna1g)", "Cav3.2 (Cacna1h)", "Cav3.3 (Cacna1i)", 
+                        "Rn7sk", "Actb"))
+```
+
+```{r}
+# reorder and subplot the heatmap
+
+# for HW-related genes
+
+
+df_pheatmap_pv_sst_04hw_logcpm_reorder <- df_pheatmap_pv_sst_04hw_logcpm[c("Kcnc1", "Kcnc2", "Kcnc3", "Kcnc4", 
+                                                                           "Scn1a", "Scn2a1", "Scn3a", "Scn4a", "Scn5a", "Scn8a", "Scn9a", "Scn10a", "Scn11a","Scn1b", 
+                                                                           "Kcnn1", "Kcnn2", "Kcnn3", 
+                                                                           "Cacna1a", "Cacna1b", "Cacna1c", "Cacna1d", "Cacna1e", "Cacna1f", "Cacna1g", "Cacna1h", "Cacna1i"), ]
+
+# new data frame for legend using the same name
+annotation_gene_channel <- data.frame(
+  Ion_Channel = factor(rep(c("Kv3", "Nav", "SK", "Cav"), c(4, 10, 3, 9)))
+)
+rownames(annotation_gene_channel) <- rownames(df_pheatmap_pv_sst_04hw_logcpm_reorder)
+
+# set annotation color for later heatmap etc.
+ann_colors <- list(
+  Ion_Channel = c(Kv3 = "#eb706d", Nav = "#ebaf6d", SK = "#c4f19a", Cav = "#c79af1")
+)
+
+pheatmap(df_pheatmap_pv_sst_04hw_logcpm_reorder, cluster_cols = F, cluster_rows = F, annotation_row = annotation_gene_channel, annotation_colors = ann_colors, main = "log2(CPM+1)", angle_col = 0, 
+         gaps_row = c(4,14,17),
+         labels_row = c("Kv3.1 (Kcnc1)", "Kv3,2 (Kcnc2)", "Kv3.3 (Kcnc3)", "Kv3.4 (Kcnc4)", 
+                        "Nav1,1 (Scn1a)", "Nav1,2a (Scn2a1)", "Nav1.3a (Scn3a)", "Nav1.4a (Scn4a)", "Nav1.5a (Scn5a)", "Nav1,6a (Scn8a)", "Nav1,7a (Scn9a)", "Nav1.8a (Scn10a)", "Nav1.9a (Scn11a)", "Nav1.1b (Scn1b)", 
+                        "SK1 (Kcnn1)", "SK2 (Kcnn2)", "SK3 (Kcnn3)", 
+                        "Cav2.1 (Cacna1a)", "Cav2,2 (Cacna1b)", "Cav1.2 (Cacna1c)", "Cav1.3 (Cacna1d)", "Cav2.3 (Cacna1e)", "Cav1.4 (Cacna1f)", "Cav3.1 (Cacna1g)", "Cav3.2 (Cacna1h)", "Cav3.3 (Cacna1i)"))
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# scatter plot of HW or AI ~ log2(cpm+1) for certain genes
+# which gene? - HW: Kv3.1, Nav1.1; AI: SK2 (highest average expression level), Cav2.3
+
+# also add the fitting line later for: (1) one line for both cell tyeps (2) two lines for each cell type separately
+
+# HW ~ Kv3.1 (Kcnc1)
+scatter_HW_Kcnc1 <- ggplot(channel_pv_sst_L23_04hw_cpm, aes(x = log2(Kcnc1 + 1), y = HW, color = cell_type)) + 
+  geom_point() + 
+  labs(title = "HW ~ Kv3.1", 
+       subtitle = expression(paste("log"["2"], "(CPM+1)")), 
+       x = "Kv3.1 (Kcnc1)", y = "half-width (ms)")
+
+scatter_HW_Kcnc1
+
+```
+
+
+```{r}
+# HW ~ Nav1.1 (Scn1a)
+scatter_HW_Scn1a <- ggplot(channel_pv_sst_L23_04hw_cpm, aes(x = log2(Scn1a + 1), y = HW, color = cell_type)) + 
+  geom_point() + 
+  labs(title = "HW ~ Nav1.1", 
+       subtitle = expression(paste("log"["2"], "(CPM+1)")), 
+       x = "Nav1.1 (Scn1a)", y = "half-width (ms)")
+
+scatter_HW_Scn1a
+
+```
+
+```{r}
+plot_grid(scatter_HW_Kcnc1, scatter_HW_Scn1a, labels = c("A", "B"), nrow = 2)
+
+```
+
+
+```{r}
+# HW ~ Kv3.3 (Kcnc3)
+scatter_HW_Kcnc3 <- ggplot(channel_pv_sst_L23_04hw_cpm, aes(x = log2(Kcnc3 + 1), y = HW, color = cell_type)) + 
+  geom_point() + 
+  labs(title = "HW ~ Kv3.3", 
+       subtitle = expression(paste("log"["2"], "(CPM+1)")), 
+       x = "Kv3.3 (Kcnc3)", y = "half-width (ms)")
+
+scatter_HW_Kcnc3
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# AI ~ SK2 (Kcnn2)
+scatter_AI_Kcnn2 <- ggplot(channel_pv_sst_L23_AI_cpm, aes(x = log2(Kcnn2 + 1), y = AI, color = cell_type)) + 
+  geom_point() + 
+  labs(title = "AI ~ SK2", 
+       subtitle = expression(paste("log"["2"], "(CPM+1)")), 
+       x = "SK2 (Kcnn2)", y = "Adaptation Index")
+
+scatter_AI_Kcnn2
+
+```
+
+
+
+```{r}
+# AI ~ Cav2.3 (Cacna1e)
+scatter_AI_Cacna1e <- ggplot(channel_pv_sst_L23_AI_cpm, aes(x = log2(Cacna1e + 1), y = AI, color = cell_type)) + 
+  geom_point() + 
+  labs(title = "AI ~ Cav2.3", 
+       subtitle = expression(paste("log"["2"], "(CPM+1)")), 
+       x = "Cav2.3 (Cacna1e)", y = "Adaptation Index")
+
+scatter_AI_Cacna1e
+
+```
+
+
+
+```{r}
+plot_grid(scatter_HW_Kcnc1+theme(legend.position = 'none'), 
+          scatter_HW_Scn1a+theme(legend.position = 'none'), 
+          scatter_AI_Kcnn2+theme(legend.position = 'none'), 
+          scatter_AI_Cacna1e+theme(legend.position = 'none'), 
+          labels = c("A", "B", "C", "D"), nrow = 2)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# a function for cell type drive/non-cell type-driven model (linear model & ANOVA)
+single_lm_anova <- function(type_layer_ephy_cpm, ephy_name, gene_name){
+  # type_layer_ephy_cpm is the merged dataframe containing ephy parameter and all genes' CPM counts
+  # ephy_name should be "AI" or "HW"
+  # gene_name should be gene's name. A list of gene name should be enerated outside the entire loop
+  
+  col_ephy <- type_layer_ephy_cpm[, ephy_name]
+  col_gene_cpm <- log2(type_layer_ephy_cpm[, gene_name] +1)
+  col_cell_type <- type_layer_ephy_cpm[, "cell_type"]
+  
+  # a differential expression test between PV and SST cells
+  DE_pv_cpm <- type_layer_ephy_cpm[, gene_name][which(type_layer_ephy_cpm[, "cell_type"] == "PV")]
+  DE_sst_cpm <- type_layer_ephy_cpm[, gene_name][which(type_layer_ephy_cpm[, "cell_type"] == "SST")]
+  DE_wil_Pr <- wilcox.test(DE_pv_cpm, DE_sst_cpm)$p.value
+  
+  ephy_cpm_lm <- lm(col_ephy ~ col_gene_cpm)
+  ephy_type_lm <- lm(col_ephy ~ col_cell_type)
+  ephy_cpm_type_lm <- lm(col_ephy ~ col_gene_cpm + col_cell_type) # log!!!
+  
+  cpm_vs_all_anova <- anova(ephy_cpm_lm, ephy_cpm_type_lm)
+  type_vs_all_anova <- anova(ephy_type_lm, ephy_cpm_type_lm)
+  
+  sum_ephy_cpm <- summary(ephy_cpm_lm)
+  ftest_ephy_cpm <- sum_ephy_cpm$fstatistic
+  pf_ephy_cpm <- 1-pf(ftest_ephy_cpm[1], ftest_ephy_cpm[2], ftest_ephy_cpm[3])
+  adjr2_ephy_cpm <- sum_ephy_cpm$adj.r.squared
+  
+  sum_ephy_type <- summary(ephy_type_lm)
+  ftest_ephy_type <- sum_ephy_type$fstatistic
+  pf_ephy_type <- 1-pf(ftest_ephy_type[1], ftest_ephy_type[2], ftest_ephy_type[3])
+  adjr2_ephy_type <- sum_ephy_type$adj.r.squared
+  
+  sum_ephy_cpm_type <- summary(ephy_cpm_type_lm)
+  ftest_ephy_cpm_type <- summary(ephy_cpm_type_lm)$fstatistic
+  pf_ephy_cpm_type <- 1-pf(ftest_ephy_cpm_type[1], ftest_ephy_cpm_type[2], ftest_ephy_cpm_type[3])
+  adjr2_ephy_cpm_type <- sum_ephy_cpm_type$adj.r.squared
+  
+  cpm_vs_all_p <- cpm_vs_all_anova[2, "Pr(>F)"] #after calculating all gene's lmlm_p, adj.p should be calculated for multiple hypothesis test
+  type_vs_all_p <- type_vs_all_anova[2, "Pr(>F)"]
+  
+  output_df <- data.frame(DE_wilcox_Pr = DE_wil_Pr, 
+                          
+                          cpm_only_Rsquared = adjr2_ephy_cpm, 
+                          cpm_only_Pr = pf_ephy_cpm,
+                          
+                          type_only_Rsquared = adjr2_ephy_type,
+                          type_only_Pr = pf_ephy_type,
+                          
+                          cpm_type_Rsquared = adjr2_ephy_cpm_type, 
+                          cpm_type_Pr = pf_ephy_cpm_type,
+                          
+                          Pr_cpm_vs_all_anova = cpm_vs_all_p, 
+                          Pr_type_vs_all_anova = type_vs_all_p,
+                          
+                          row.names = gene_name)
+  
+  return(output_df)
+  
+}
+
+
+```
+
+
+```{r}
+# generate the list of gene names
+gene_names <- rownames(cpm_L23_sst_pv)
+
+# test the single loop
+single_lm_anova(pv_sst_L23_04hw_cpm, "HW", gene_names[588])
+
+```
+
+```{r}
+# for all genes
+HW_cpm_celltype_fitting <- as.data.frame(matrix(nrow = length(gene_names), ncol = 9))
+rownames(HW_cpm_celltype_fitting) <- gene_names
+colnames(HW_cpm_celltype_fitting) <- c("DE_wilcox_Pr", 
+                                       "cpm_only_Rsquared", "cpm_only_Pr",
+                                       "type_only_Rsquared", "type_only_Pr",
+                                       "cpm_type_Rsquared", "cpm_type_Pr",
+                                       "Pr_cpm_vs_all_anova", "Pr_type_vs_all_anova")
+
+for (i in 1:length(gene_names)) {
+  gene_name <- gene_names[i]
+  HW_cpm_celltype_fitting[i, ] <- single_lm_anova(pv_sst_L23_04hw_cpm, "HW", gene_name)
+}
+
+# save this output
+# write.csv(HW_cpm_celltype_fitting, "0412_HW_cpm_celltype_lm_anova.csv")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# calculate adj.P (FDR) for multiple hypothesis
+HW_cpm_celltype_fitting$cpm_only_adjPr <- p.adjust(HW_cpm_celltype_fitting$cpm_only_Pr, method = "BH")
+
+HW_cpm_celltype_fitting$type_only_adjPr <- p.adjust(HW_cpm_celltype_fitting$type_only_Pr, method = "BH")
+
+HW_cpm_celltype_fitting$cpm_type_adjPr <- p.adjust(HW_cpm_celltype_fitting$cpm_type_Pr, method = "BH")
+
+HW_cpm_celltype_fitting$adj_Pr_cpm_vs_all_anova <- p.adjust(HW_cpm_celltype_fitting$Pr_cpm_vs_all_anova, method = "BH")
+
+HW_cpm_celltype_fitting$adj_Pr_type_vs_all_anova <- p.adjust(HW_cpm_celltype_fitting$Pr_type_vs_all_anova, method = "BH")
+
+HW_cpm_celltype_fitting$DE_adjPr <- p.adjust(HW_cpm_celltype_fitting$DE_wilcox_Pr, method = "BH") # for DE checking
+# rearrange the columns
+HW_cpm_celltype_fitting <- HW_cpm_celltype_fitting[, c(1,15,  
+                                                       2,3,10, 
+                                                       4,5,11,  
+                                                       6,7,12, 
+                                                       8,13, 9,14)]
+
+# save this output
+# write.csv(HW_cpm_celltype_fitting, "0418_HW_cpm_celltype_lm_anova_FDR.csv")
+
+```
+
+
+```{r}
+channel_pv_sst_L23_DE_check <- HW_cpm_celltype_fitting[c("Kcnn1", "Kcnn2", "Kcnn3", 
+                                                       "Kcnc1", "Kcnc2", "Kcnc3", "Kcnc4", 
+                                                       "Scn1a", "Scn2a1", "Scn3a", "Scn4a", "Scn5a", "Scn8a", "Scn9a", "Scn10a", "Scn11a", "Scn1b", 
+                                                       "Cacna1a", "Cacna1b", "Cacna1c", "Cacna1d", "Cacna1e", "Cacna1f", "Cacna1g", "Cacna1h", "Cacna1i", 
+                                                       "Rn7sk", "Actb"), 
+                                                       c(1,2)]
+
+channel_pv_sst_L23_DE_check$significant <- ifelse(channel_pv_sst_L23_DE_check$DE_adjPr <= 0.05, "Significant", "NotSig")
+
+View(channel_pv_sst_L23_DE_check)
+
+```
+
+
+```{r}
+# supplementary table 1: ion channel coding genes' log2(average CPM+1) and Wilcoxon test of differential expression
+
+s_table_1 <- cbind(df_pheatmap_pv_sst_04hw_logcpm, channel_pv_sst_L23_DE_check)
+# write.csv(s_table_1, "Supplementary_Table_1_mean_CPM_DE.csv")
+
+```
+
+
+
+
+
+
+
+
+```{r}
+# some error for AI
+single_lm_anova_test <- function(type_layer_ephy_cpm, ephy_name, gene_name){
+  # type_layer_ephy_cpm is the merged dataframe containing ephy parameter and all genes' CPM counts
+  # ephy_name should be "AI" or "HW"
+  # gene_name should be gene's name. A list of gene name should be enerated outside the entire loop
+  
+  col_ephy <- type_layer_ephy_cpm[, ephy_name]
+  col_gene_cpm <- log2(type_layer_ephy_cpm[, gene_name] + 1)
+  col_cell_type <- type_layer_ephy_cpm[, "cell_type"]
+  
+  if(sum(col_gene_cpm) == 0){
+    # print("00000")
+    # print(sum(col_gene_cpm))
+    # print(col_gene_cpm)
+    
+    DE_wil_Pr <- NA
+    adjr2_ephy_cpm <- NA
+    pf_ephy_cpm <- NA
+    
+    adjr2_ephy_type <- NA
+    pf_ephy_type <- NA
+    
+    adjr2_ephy_cpm_type <- NA
+    pf_ephy_cpm_type <- NA
+    
+    cpm_vs_all_p <- NA
+    type_vs_all_p <- NA
+    
+  } else {
+    # print("not 0")
+    ephy_cpm_lm <- lm(col_ephy ~ col_gene_cpm)
+    ephy_type_lm <- lm(col_ephy ~ col_cell_type)
+    ephy_cpm_type_lm <- lm(col_ephy ~ col_gene_cpm + col_cell_type)
+    
+    # a differential expression test between PV and SST cells
+    DE_pv_cpm <- type_layer_ephy_cpm[, gene_name][which(type_layer_ephy_cpm[, "cell_type"] == "PV")]
+    DE_sst_cpm <- type_layer_ephy_cpm[, gene_name][which(type_layer_ephy_cpm[, "cell_type"] == "SST")]
+    DE_wil_Pr <- wilcox.test(DE_pv_cpm, DE_sst_cpm)$p.value
+    
+    
+    cpm_vs_all_anova <- anova(ephy_cpm_lm, ephy_cpm_type_lm)
+    type_vs_all_anova <- anova(ephy_type_lm, ephy_cpm_type_lm)
+    
+    sum_ephy_cpm <- summary(ephy_cpm_lm)
+    ftest_ephy_cpm <- sum_ephy_cpm$fstatistic
+    pf_ephy_cpm <- 1-pf(ftest_ephy_cpm[1], ftest_ephy_cpm[2], ftest_ephy_cpm[3])
+    adjr2_ephy_cpm <- sum_ephy_cpm$adj.r.squared
+    
+    sum_ephy_type <- summary(ephy_type_lm)
+    ftest_ephy_type <- sum_ephy_type$fstatistic
+    pf_ephy_type <- 1-pf(ftest_ephy_type[1], ftest_ephy_type[2], ftest_ephy_type[3])
+    adjr2_ephy_type <- sum_ephy_type$adj.r.squared
+    
+    sum_ephy_cpm_type <- summary(ephy_cpm_type_lm)
+    ftest_ephy_cpm_type <- summary(ephy_cpm_type_lm)$fstatistic
+    pf_ephy_cpm_type <- 1-pf(ftest_ephy_cpm_type[1], ftest_ephy_cpm_type[2], ftest_ephy_cpm_type[3])
+    adjr2_ephy_cpm_type <- sum_ephy_cpm_type$adj.r.squared
+  
+    cpm_vs_all_p <- cpm_vs_all_anova[2, "Pr(>F)"] #after calculating all gene's lmlm_p, adj.p should be calculated for multiple hypothesis test
+    type_vs_all_p <- type_vs_all_anova[2, "Pr(>F)"]
+  
+  }
+  
+  output_df <- data.frame(DE_wilcox_Pr = DE_wil_Pr, 
+                          
+                          cpm_only_Rsquared = adjr2_ephy_cpm, 
+                          cpm_only_Pr = pf_ephy_cpm,
+                          
+                          type_only_Rsquared = adjr2_ephy_type,
+                          type_only_Pr = pf_ephy_type,
+                          
+                          cpm_type_Rsquared = adjr2_ephy_cpm_type, 
+                          cpm_type_Pr = pf_ephy_cpm_type,
+                          
+                          Pr_cpm_vs_all_anova = cpm_vs_all_p,
+                          Pr_type_vs_all_anova = type_vs_all_p,
+                          
+                          row.names = gene_name)
+  #print(ftest_ephy_cpm)
+  return(output_df)
+  
+}
+
+
+
+```
+
+
+```{r}
+AI_cpm_celltype_fitting <- as.data.frame(matrix(nrow = length(gene_names), ncol = 9))
+rownames(AI_cpm_celltype_fitting) <- gene_names
+colnames(AI_cpm_celltype_fitting) <- c("DE_wilcox_Pr", 
+                                       "cpm_only_Rsquared", "cpm_only_Pr",
+                                       "type_only_Rsquared", "type_only_Pr",
+                                       "cpm_type_Rsquared", "cpm_type_Pr",
+                                       "Pr_cpm_vs_all_anova", "Pr_type_vs_all_anova")
+
+for (i in 1:length(gene_names)) {
+  gene_name <- gene_names[i]
+  AI_cpm_celltype_fitting[i, ] <- single_lm_anova_test(pv_sst_L23_AI_cpm, "AI", gene_name)
+}
+
+# save this output
+# write.csv(AI_cpm_celltype_fitting, "0412_AI_cpm_celltype_lm_anova.csv")
+
+# single_lm_anova_test(pv_sst_L23_AI_cpm, "AI", gene_names[1])
+
+```
+
+
+```{r}
+# calculate adj.P (FDR) for multiple hypothesis
+AI_cpm_celltype_fitting$cpm_only_adjPr <- p.adjust(AI_cpm_celltype_fitting$cpm_only_Pr, method = "BH")
+
+AI_cpm_celltype_fitting$type_only_adjPr <- p.adjust(AI_cpm_celltype_fitting$type_only_Pr, method = "BH")
+
+AI_cpm_celltype_fitting$cpm_type_adjPr <- p.adjust(AI_cpm_celltype_fitting$cpm_type_Pr, method = "BH")
+
+AI_cpm_celltype_fitting$adj_Pr_cpm_vs_all_anova <- p.adjust(AI_cpm_celltype_fitting$Pr_cpm_vs_all_anova, method = "BH")
+
+AI_cpm_celltype_fitting$adj_Pr_type_vs_all_anova <- p.adjust(AI_cpm_celltype_fitting$Pr_type_vs_all_anova, method = "BH")
+
+AI_cpm_celltype_fitting$DE_adjPr <- p.adjust(AI_cpm_celltype_fitting$DE_wilcox_Pr, method = "BH") # for DE checking
+# rearrange the columns
+AI_cpm_celltype_fitting <- AI_cpm_celltype_fitting[, c(1,15,  
+                                                       2,3,10, 
+                                                       4,5,11,  
+                                                       6,7,12, 
+                                                       8,13, 9,14)]
+
+# rearrange the columns
+# AI_cpm_celltype_fitting <- AI_cpm_celltype_fitting[, c(1,2,9, 3,4,10, 5,6,11, 7,12, 8,13)]
+
+# save this output
+# write.csv(AI_cpm_celltype_fitting, "0418_AI_cpm_celltype_lm_anova_FDR.csv")
+
+```
+
+
+
+```{r}
+# scatter plot to have a general view of the FDR and R_square for all genes
+# for HW
+HW_cpm_celltype_fitting$significant <- ifelse((HW_cpm_celltype_fitting$adj_Pr_type_vs_all_anova < 0.05)&(HW_cpm_celltype_fitting$DE_adjPr < 0.05), "DE_FDR<0.05", "NotSig")
+# write.csv(HW_cpm_celltype_fitting, "0420_Hw_cpm_celltype_lm_anova_FDR_DE.csv")
+```
+
+```{r}
+# take subset of the data based on the select threshold of #non_zero_cpm_gene
+HW_cpm_celltype_fitting_QC <- HW_cpm_celltype_fitting
+
+my_fun_non_zero_cpm_cell <- function(col) {
+  num_non_zerocpm_cell <- sum(col > 0)
+  return(num_non_zerocpm_cell)
+}
+
+non_zero_cpm_cells_04hw <- data.frame(non_zero_cpm_cell = as.integer(lapply(pv_sst_L23_04hw_cpm_QC, my_fun_non_zero_cpm_cell)))
+rownames(non_zero_cpm_cells_04hw) <- colnames(pv_sst_L23_04hw_cpm_QC)
+
+hw_qc_gene_list <- rownames(non_zero_cpm_cells_04hw)[non_zero_cpm_cells_04hw$non_zero_cpm_cell >= 45]
+hw_qc_sub_HW_cpm_celltype_fitting_QC <- HW_cpm_celltype_fitting[rownames(HW_cpm_celltype_fitting_QC) %in% hw_qc_gene_list, ]
+
+
+
+```
+
+
+
+```{r}
+df_HW_significant <- hw_qc_sub_HW_cpm_celltype_fitting_QC
+df_HW_significant$Gene <- rownames(df_HW_significant)
+
+fitting_plot_HW <- ggplot(df_HW_significant, aes(x = cpm_type_Rsquared ,y = -log10(adj_Pr_type_vs_all_anova))) + 
+  geom_point(aes(color = significant)) + 
+  scale_color_manual(values = c("red", "grey")) + 
+  theme_bw(base_size = 12) + theme(legend.position = "bottom") + 
+  geom_text_repel(
+    data = subset(df_HW_significant, (adj_Pr_type_vs_all_anova < 0.05)&(DE_adjPr < 0.05)), 
+    aes(label = Gene),
+    size = 5, 
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")
+  ) + 
+  labs(title = "HW fitting", 
+       x = "R square of linear regression II", y = expression(paste("-log"["10"], "FDR")))
+
+fitting_plot_HW
+
+```
+
+```{r}
+sig_HW_related_gene <- df_HW_significant[which(df_HW_significant$significant == "DE_FDR<0.05"), ]
+
+View(sig_HW_related_gene)
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+```{r}
+# for AI
+# AI_cpm_celltype_fitting$significant <- ifelse(AI_cpm_celltype_fitting$adj_Pr_type_vs_all_anova < 0.05, "DE_FDR<0.05", "NotSig")
+AI_cpm_celltype_fitting$significant <- ifelse((AI_cpm_celltype_fitting$adj_Pr_type_vs_all_anova < 0.05)&(AI_cpm_celltype_fitting$DE_adjPr < 0.05), "DE_FDR<0.05", "NotSig")
+# write.csv(AI_cpm_celltype_fitting, "0420_AI_cpm_celltype_lm_anova_FDR_DE.csv")
+
+df_AI_significant <- AI_cpm_celltype_fitting
+df_AI_significant$Gene <- rownames(df_AI_significant)
+
+fitting_plot_AI <- ggplot(df_AI_significant, aes(x = cpm_type_Rsquared ,y = -log10(adj_Pr_type_vs_all_anova))) + 
+  geom_point(aes(color = significant)) + 
+  scale_color_manual(values = c("red", "grey")) + 
+  theme_bw(base_size = 12) + theme(legend.position = "bottom") + 
+  geom_text_repel(
+    data = subset(df_AI_significant, (adj_Pr_type_vs_all_anova < 0.05)&(DE_adjPr < 0.05)), 
+    aes(label = Gene),
+    size = 5, 
+    box.padding = unit(0.35, "lines"),
+    point.padding = unit(0.3, "lines")
+  ) + 
+  labs(title = "AI fitting", x = "R square of model II", y = expression(paste("-log"["10"], "FDR")))
+
+fitting_plot_AI
+
+```
+
+```{r}
+plot_grid(fitting_plot_HW+theme(legend.position = 'none'), 
+          fitting_plot_AI+theme(legend.position = 'none'), 
+          labels = c("A", "B"), nrow = 2)
+
+```
+
+```{r}
+hist(df_AI_significant$Pr_type_vs_all_anova, xlab = "P value of ANOVA model comparation test", ylab = "number of gene", main = "Histogram of AI fitting ANOVA model comparation p-value")
+
+
+```
+
+```{r}
+# par(mfrow = c(1,2))
+
+
+hist(df_HW_significant$Pr_type_vs_all_anova, xlab = "p-value of ANOVA comparation test", ylab = "number of gene", main = "Histogram of HW fitting ANOVA comparation p-value", ylim = c(0,2500))
+hist(df_AI_significant$Pr_type_vs_all_anova, xlab = "p-value of ANOVA comparation test", ylab = "number of gene", main = "Histogram of AI fitting ANOVA comparation p-value", ylim = c(0,2500))
+
+
+
+```
+
+
+
+
+
+
+```{r}
+# a function to plot scatter and regression lines for given gene
+ggplot_scatter_lm <- function(channel_pv_sst_L23_ephy_cpm, ephy, gene) {
+  
+  log_sub_df <- channel_pv_sst_L23_ephy_cpm[, c(ephy, gene, "cell_type")]
+  log_sub_df[, 2] <- log2(log_sub_df[,2] +1)
+  
+  y_label <- ifelse(ephy == "HW", "Half-width", "Adaptation Index")
+  
+  figure <- ggplot(log_sub_df, aes_string(x = gene, y = ephy)) + 
+    geom_point(aes(color = cell_type)) + 
+    geom_smooth(method = lm, aes(fill = cell_type)) + 
+    labs(title = paste(ephy, " ~ ", gene), 
+         subtitle = expression(paste("log"["2"], "(CPM+1)")), 
+         x = gene, y = y_label)
+  
+  return(figure)
+  
+}
+
+ggplot_scatter_lm(channel_pv_sst_L23_04hw_cpm, "HW", "Kcnc1")
+```
+
+```{r}
+# a function to plot scatter and regression lines for given gene, and adds a line fitting two cell types' data points together
+ggplot_scatter_lm_three <- function(channel_pv_sst_L23_ephy_cpm, ephy, gene) {
+  
+  log_sub_df <- channel_pv_sst_L23_ephy_cpm[, c(ephy, gene, "cell_type")]
+  log_sub_df[, 2] <- log2(log_sub_df[,2] +1)
+  
+  y_label <- ifelse(ephy == "HW", "Half-width", "Adaptation Index")
+  
+  figure <- ggplot(log_sub_df, aes_string(x = gene, y = ephy)) + 
+    geom_point(aes(color = cell_type)) + 
+    geom_smooth(method = lm, aes(fill = cell_type)) + 
+    geom_smooth(method = lm) + 
+    labs(title = paste(ephy, " ~ ", gene), 
+         subtitle = expression(paste("log"["2"], "(CPM+1)")), 
+         x = gene, y = y_label)
+  
+  return(figure)
+  
+}
+
+ggplot_scatter_lm_three(channel_pv_sst_L23_04hw_cpm, "HW", "Kcnc1")
+```
+
+
+
+
+```{r}
+
+scatter_lm_HW_log_Kcnc1 <- ggplot(channel_pv_sst_L23_04hw_cpm, aes(x = log2(Kcnc1 + 1), y = HW)) + 
+  geom_point(aes(color = cell_type)) + 
+  geom_smooth(method = lm) + 
+  geom_smooth(method = lm, aes(fill = cell_type))
+              
+scatter_lm_HW_log_Kcnc1
+
+
+
+
+```
+
+
+
+```{r}
+# HW ~ Scn1a
+ggplot_scatter_lm(channel_pv_sst_L23_04hw_cpm, "HW", "Scn1a")
+ggplot_scatter_lm_three(channel_pv_sst_L23_04hw_cpm, "HW", "Scn1a")
+
+```
+
+```{r}
+# HW ~ Baiap3
+ggplot_scatter_lm(pv_sst_L23_04hw_cpm, "HW", "Baiap3")
+ggplot_scatter_lm_three(pv_sst_L23_04hw_cpm, "HW", "Baiap3")
+
+```
+
+```{r}
+# HW ~ Kcnab3
+ggplot_scatter_lm(pv_sst_L23_04hw_cpm, "HW", "Kcnab3")
+ggplot_scatter_lm_three(pv_sst_L23_04hw_cpm, "HW", "Kcnab3")
+
+```
+
+```{r}
+# HW ~ Dgkb
+ggplot_scatter_lm(pv_sst_L23_04hw_cpm, "HW", "Dgkb")
+ggplot_scatter_lm_three(pv_sst_L23_04hw_cpm, "HW", "Dgkb")
+
+```
+
+
+
+
+
+
+
+```{r}
+# HW ~ Cdh7
+ggplot_scatter_lm(pv_sst_L23_04hw_cpm, "HW", "Cdh7")
+ggplot_scatter_lm_three(pv_sst_L23_04hw_cpm, "HW", "Cdh7")
+
+```
+
+```{r}
+# HW ~ Kcnab3
+ggplot_scatter_lm(pv_sst_L23_04hw_cpm, "HW", "Kcnab3")
+ggplot_scatter_lm_three(pv_sst_L23_04hw_cpm, "HW", "Kcnab3")
+
+```
+
+
+```{r}
+# HW ~ Unc5d
+ggplot_scatter_lm(pv_sst_L23_04hw_cpm, "HW", "Unc5d")
+ggplot_scatter_lm_three(pv_sst_L23_04hw_cpm, "HW", "Unc5d")
+
+```
+
+
+```{r}
+# HW ~ Kcnc1
+ggplot_scatter_lm(pv_sst_L23_04hw_cpm, "HW", "Kcnc1")
+ggplot_scatter_lm_three(pv_sst_L23_04hw_cpm, "HW", "Kcnc1")
+
+```
+
+
+```{r}
+# HW ~ Tmsb10
+ggplot_scatter_lm(pv_sst_L23_04hw_cpm, "HW", "Tmsb10")
+ggplot_scatter_lm_three(pv_sst_L23_04hw_cpm, "HW", "Tmsb10")
+
+```
+
+
+```{r}
+# HW ~ Snca
+ggplot_scatter_lm(pv_sst_L23_04hw_cpm, "HW", "Snca")
+ggplot_scatter_lm_three(pv_sst_L23_04hw_cpm, "HW", "Snca")
+
+```
+
+
+
+
+
+
+
+
+
+```{r}
+# AI ~ Kcnn2
+ggplot_scatter_lm(channel_pv_sst_L23_AI_cpm, "AI", "Kcnn2")
+ggplot_scatter_lm_three(channel_pv_sst_L23_AI_cpm, "AI", "Kcnn2")
+
+```
+
+
+```{r}
+# AI ~ Cacna1e
+ggplot_scatter_lm(channel_pv_sst_L23_AI_cpm, "AI", "Cacna1e")
+ggplot_scatter_lm_three(channel_pv_sst_L23_AI_cpm, "AI", "Cacna1e")
+
+```
+
+
+```{r}
+# AI ~ Stxbp2
+ggplot_scatter_lm(pv_sst_L23_AI_cpm, "AI", "Stxbp2")
+ggplot_scatter_lm_three(pv_sst_L23_AI_cpm, "AI", "Stxbp2")
+
+```
+
+
+```{r}
+# AI ~ Shisa9
+ggplot_scatter_lm(pv_sst_L23_AI_cpm, "AI", "Shisa9")
+ggplot_scatter_lm_three(pv_sst_L23_AI_cpm, "AI", "Shisa9")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+## merge cell's t-type and layer to this table
+pv_metadata_nwbs <- read.csv("0309_pv_metadata_nwbs.csv", header = T, check.names = F)[, -1]
+## only index, structure and T-type_Label are needed to be merged to the fitting output
+pv_index_layer_Ttype <- pv_metadata_nwbs[, c("index", "structure", "T-type_Label")]
+pv_filtered_fit_metadata <- merge(pv_raw_fit, pv_index_layer_Ttype, by = "index", all.x = T)
+
+
+## merge cell's t-type and layer to this table
+sst_metadata_nwbs <- read.csv("0309_sst_metadata_nwbs.csv", header = T, check.names = F)[, -1]
+## only index, structure and T-type_Label are needed to be merged to the fitting output
+sst_index_layer_Ttype <- sst_metadata_nwbs[, c("index", "structure", "T-type_Label")]
+sst_filtered_fit_metadata <- merge(sst_filtered_fit, sst_index_layer_Ttype, by = "index", all.x = T)
+
+
+
+```
+
+
+
+
+
+
+
