@@ -1,0 +1,192 @@
+---
+title: "Contamination_score"
+author: "Yijie"
+date: "2024-05-15"
+output: html_document
+---
+
+```{r}
+# Calculate contamination score related parameters based on Yao data set Seurat.ss.rda
+library(dplyr)
+library(Seurat)
+# Yao data set raw counts (Ssv4) and metadata
+load(file = "Seurat.ss.rda") # Yao data set raw counts, SSv4
+metadata <- read.csv("metadata.csv", header = T, check.names = F) # Yao data set metadata
+# get cell type marker information from Allen Institute
+class_markers <- read.csv("class_markers.csv", header = T, check.names = F)
+```
+
+
+```{r}
+Yao_seurat <- ss.seurat
+
+# QC
+Yao_seurat[["percent.mt"]] <- PercentageFeatureSet(Yao_seurat, pattern = "^MT-")
+Yao_seurat <- subset(Yao_seurat, subset = nFeature_RNA > 2500 & nFeature_RNA < 15000 & percent.mt <5)
+
+```
+
+
+```{r}
+# According to metadata, extract VISp PV, SST and Microglia cells
+visp_metadata <- metadata[metadata$region_label == "VISp", ]
+visp_pv_metadata <- visp_metadata[visp_metadata$subclass_label == "Pvalb", ]
+visp_sst_metadata <- visp_metadata[visp_metadata$subclass_label == "Sst", ]
+visp_micro_metadata <- visp_metadata[visp_metadata$subclass_label == "Micro-PVM", ]
+
+# VISp, pv cells Seurat object
+visp_pv_subset <- subset(x = Yao_seurat, cells = visp_pv_metadata$sample_name)
+visp_pv_cpm <- as.data.frame(visp_pv_subset@assays$RNA@data)
+# VISp, sst cells Seurat object
+visp_sst_subset <- subset(x = Yao_seurat, cells = visp_sst_metadata$sample_name)
+visp_sst_cpm <- as.data.frame(visp_sst_subset@assays$RNA@data)
+# VISp, microglia cells Seurat object
+visp_micro_subset <- subset(x = Yao_seurat, cells = visp_micro_metadata$sample_name)
+visp_micro_cpm <- as.data.frame(visp_micro_subset@assays$RNA@data)
+
+```
+
+
+```{r}
+# select Microglia marker genes
+micro_pv_cpm <- visp_pv_cpm[rownames(visp_pv_cpm) %in% class_markers$Macrophage, ]
+micro_sst_cpm <- visp_sst_cpm[rownames(visp_sst_cpm) %in% class_markers$Macrophage, ]
+micro_micro_cpm <- visp_micro_cpm[rownames(visp_micro_cpm) %in% class_markers$Macrophage, ]
+
+```
+
+
+
+```{r}
+# a function to calculate the median of summed log2(CPM+1) of 50 microglia markers
+# the input data frame has genes in rows and cells in columns, so log2 first and then
+
+func_log_sum_median <- function(cpm_matrix) {
+  # log2 normalized
+  print("take a look at the input matrix")
+  print(dim(cpm_matrix))
+  log_cpm <- log2(cpm_matrix+1)
+  print("log cpm result")
+  print(dim(log_cpm))
+  sum_log_cpm <- apply(log_cpm,2,sum)
+  print("column sum")
+  print(sum_log_cpm)
+  # median
+  med_sum_log_cpm <- median(sum_log_cpm)
+  
+  return(med_sum_log_cpm)
+  
+}
+
+```
+
+
+```{r}
+Yao_pv_micro <- func_log_sum_median(micro_pv_cpm)
+Yao_sst_micro <- func_log_sum_median(micro_sst_cpm)
+Yao_micro_micro <- func_log_sum_median(micro_micro_cpm)
+```
+
+
+```{r}
+# read in Patch-seq data set
+patchseq_pv_count <- read.csv("Input_Data/0303_pv_counts.csv", header = T, check.names = F)
+rownames(patchseq_pv_count) <- patchseq_pv_count[,1]
+patchseq_pv_count <- patchseq_pv_count[, -1]
+
+patchseq_sst_count <- read.csv("Input_Data/0303_sst_counts.csv", header = T, check.names = F)
+rownames(patchseq_sst_count) <- patchseq_sst_count[,1]
+patchseq_sst_count <- patchseq_sst_count[, -1]
+
+
+```
+
+```{r}
+# calculate each cell's contamination score for Pathc-seq dataset
+# formula: CS = max {(p_pv/sst_micro - d_pv/sst_micro)/(d_pv/sst_micro - d_micro_micro), 0} 
+
+
+```
+
+
+```{r}
+# second, calculate all cells' CS for Patch-seq data set
+# call func_CS to calculate each cell's "p" parameter -- summed log2(cpm+1) for 50 Microglia markers
+
+# calculate cpm for pv and sst separately with nFeature > 200 (remove no cell in fact)
+func_seurat_cs <- function(pvsst_count_df) {
+  seurat_cs <- CreateSeuratObject(counts = pvsst_count_df, project = "seurat_cs", min.cells = 3, min.features = 200)
+  seurat_cs <- NormalizeData(seurat_cs, normalization.method = "RC", scale.factor = 1e6) # cpm
+  
+  cpm_df <- as.data.frame(seurat_cs@assays$RNA@data)
+  return(cpm_df)
+  
+}
+
+cs_cpm_pv_df <- func_seurat_cs(patchseq_pv_count)
+cs_cpm_sst_df <- func_seurat_cs(patchseq_sst_count)
+
+# first, a function to calculate CS for a data frame where each column represents a single cell
+# the output should be a dataframe contain sample name (colname), p_pv/sst_micro (only one row)
+func_p <- function(cpm_matrix) {
+  # generate an empty data frame to stroe the summed log2(CPM+1) of each cell
+  p_df <- as.data.frame(matrix(nrow = 1, ncol = ncol(cpm_matrix)))
+  colnames(p_df) <- colnames(cpm_matrix)
+  rownames(p_df) <- "p_micro" # for Microglia markers
+  
+  # subset according to the Microglia markers
+  cpm_micro <- cpm_matrix[rownames(cpm_matrix) %in% class_markers$Macrophage, ]
+  
+  # log2(cpm+1)
+  log_cpm_micro <- log2(cpm_micro+1)
+  
+  # column sum ans store them in the CS_df
+  p_df["p_micro", ] <- apply(log_cpm_micro,2,sum)
+  
+  return(p_df)
+  
+}
+
+# second, a for loop to calculate each cell's contamination score
+p_pv <- func_p(cs_cpm_pv_df)
+p_sst <- func_p(cs_cpm_sst_df)
+
+# then, a function to calculate the real CS
+func_CS <- function(df_p, cell_type = "PV/SST") {
+  # generate an empty data frame
+  df_CS <- as.data.frame(matrix(nrow = 1, ncol = ncol(df_p)))
+  rownames(df_CS) <- "CS_micro"
+  colnames(df_CS) <- colnames(df_p)
+  
+  # an "if...else..." statement to use the correct "d" parameter for the input cell type
+  if (cell_type == "PV") {
+    d_micro <- Yao_pv_micro
+    
+  } else {
+    d_micro <- Yao_sst_micro
+    
+  }
+  
+  # use the df_p and "d" parameters to calculate and return the contamination scores
+  df_CS["CS_micro", ] <- (df_p["p_micro", ]-d_micro)/(Yao_micro_micro-d_micro)
+  df_CS[df_CS < 0] <- 0
+  
+  return(df_CS)
+  
+}
+
+
+# the real contamination score for all cells
+CS_patchseq_pv <- func_CS(p_pv, "PV")
+CS_patchseq_sst <- func_CS(p_sst, "SST")
+```
+
+
+```{r}
+# save(CS_patchseq_pv, CS_patchseq_sst, file = "Input_Data/1018_contamination_scores.RData")
+```
+
+
+
+
+

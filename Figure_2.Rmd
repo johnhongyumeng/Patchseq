@@ -1,0 +1,327 @@
+---
+title: "Figure 2"
+author: "Yijie"
+date: "2025-08-11"
+output: html_document
+---
+
+Based on Patchseq_data_preparing.Rmd (including data processing, quality control, weighted linear regression, and differential expression analysis) \
+
+```{r}
+# violin plot for basic quality control (Seurat)
+# V1 pv and sst raw count were merged as V1_pv_sst_count
+V1_seurat_object <-  CreateSeuratObject(counts = V1_pv_sst_count, project = "basic_QC", min.cells = 100, min.features = 200)
+```
+
+```{r}
+V1_vln_nFeature <- VlnPlot(V1_seurat_object, features = "nFeature_RNA", ncol = 1)
+
+V1_vln_nFeature <- V1_vln_nFeature + ggtitle("nFeature_RNA") + 
+  xlab(NULL) + scale_x_discrete(labels = NULL) + 
+  scale_y_continuous(breaks = seq(2000, 13000, 3000), limits = c(2000, 13000)) + 
+  geom_hline(yintercept = 6600, linetype = "dashed", linewidth = 1.5, color = "#008000") + 
+  theme(legend.position = "none", 
+        axis.line = element_line(linewidth = 0.8), ## width of axis
+        axis.text = element_text(size = 25), 
+        axis.title = element_text(size = 25), 
+        plot.title = element_text(size = 25), 
+        legend.text = element_text(size = 20), 
+        legend.title = element_text(size = 20)) + 
+  
+  
+  coord_fixed(ratio = 0.0002)
+
+V1_vln_nFeature
+
+# ggsave("Output_Data/1128_figure2_supp/fig2_violin_nFeature.svg", plot = V1_vln_nFeature, width = 9, height = 12, units = "cm", dpi = "print")
+
+```
+
+
+```{r}
+V1_vln_nCount <- VlnPlot(V1_seurat_object, features = "nCount_RNA", ncol = 1)
+
+V1_vln_nCount <- V1_vln_nCount + ggtitle("nCount_RNA") + 
+  xlab(NULL) + scale_x_discrete(labels = NULL) + 
+  scale_y_continuous(breaks = seq(0, 2e6, 5e5), limits = c(0, 1.9e6), labels = scales::scientific_format()) + 
+  geom_hline(yintercept = 6e5, linetype = "dashed", size = 1.5, color = "#008000") + 
+  theme(legend.position = "none", 
+        axis.line = element_line(linewidth = 0.8), ## width of axis
+        axis.text = element_text(size = 25), 
+        axis.title = element_text(size = 25), 
+        plot.title = element_text(size = 25), 
+        legend.text = element_text(size = 20), 
+        legend.title = element_text(size = 20)) + 
+  coord_fixed(ratio = 0.0000012)
+
+V1_vln_nCount
+
+```
+
+
+
+```{r}
+CS_pvsst_ecdf <- ecdf(CS_pvsst_hist_df$CS)
+# Create a sequence of values to plot the ECDF curve
+CS_pvsst_ecdf_x <- seq(min(CS_pvsst_hist_df$CS), max(CS_pvsst_hist_df$CS), length.out = 2000)
+CS_pvsst_ecdf_y <- CS_pvsst_ecdf(CS_pvsst_ecdf_x)
+
+ecdf_plot_data <- data.frame(Contamination_Score = CS_pvsst_ecdf_x, 
+                             Cumulative_Probability = CS_pvsst_ecdf_y)
+
+
+cs_V1_pvsst_ecd_plot <- ggplot(ecdf_plot_data, aes(x = Contamination_Score, y = Cumulative_Probability)) + 
+  geom_line(size = 1.2) + 
+  geom_vline(xintercept = 0.2, linetype = "dashed", color = "#008000", size = 2) + 
+  scale_x_continuous(breaks = seq(0, 1, 0.25), limits = c(0, 1.1)) + 
+  scale_y_continuous(breaks = seq(0, 1, 0.2), limits = c(0, 1)) + 
+  labs(x = "Contamination Score", y = "Cumulative Probability") + 
+  theme_classic() + 
+  theme(axis.line = element_line(linewidth = 0.8), 
+        axis.text = element_text(size = 20), 
+        axis.title = element_text(size = 25), 
+        plot.title = element_text(size = 25)) + 
+  coord_fixed(ratio = 0.7) + 
+  ggtitle("Patch-seq Contamination Scores")
+  
+
+cs_V1_pvsst_ecd_plot
+```
+
+
+```{r}
+#scatter plot of HW~Kcnc1 at single-cell and then T-type level
+
+func_sc_ggplot <- function(pvsst_sc_fitting_meta_logcpm, gene_name, ephy = "HW/AI") {
+  sc_df <- pvsst_sc_fitting_meta_logcpm[, c("cell_type", ephy, gene_name)]
+  
+  # lm for hte given ephy ~ gene
+  col_ephy <- sc_df[, ephy]
+  col_gene <- sc_df[, gene_name]
+  # lm and summary
+  sc_lm <- lm(col_ephy ~ col_gene)
+  sum_sc_lm <- summary(sc_lm)
+  
+  lm_df <- as.data.frame(matrix(nrow = 1, ncol = 3))
+  colnames(lm_df) <- c("p_value", "R_squared", "slope")
+  rownames(lm_df) <- gene_name
+  lm_df[1, ] <- c(sum_sc_lm$coefficients[2,4], sum_sc_lm$r.squared, sum_sc_lm$coefficients[2,1])
+  
+  sc_df$i_pred <- predict(sc_lm)
+  sclm_ggplot <- ggplot(data = sc_df, aes(x = .data[[gene_name]], y = .data[[ephy]])) + 
+    geom_point(aes(color = cell_type), alpha = 0.6) + 
+    # scale_color_manual(values = c("#f87269", "#00bfc4")) + 
+    scale_color_manual(values = c("#0000ff", "#00ff00")) + 
+    ggtitle(paste(ephy, "~", gene_name, sep = ""))
+  
+  
+  return(sclm_ggplot)
+  
+}
+```
+
+
+```{r}
+sc_HW_Kcnc1 <- func_sc_ggplot(V1_pvsst_fitting_meta_logcpm, gene_name = "Kcnc1", ephy = "HW")
+sc_HW_Kcnc1_title <- expression(paste("Kv3.1(", italic("Kcnc1"), ")", sep = ""))
+
+sc_HW_Kcnc1  <- sc_HW_Kcnc1 + theme_classic() + xlab(expression(paste(log[2], "(CPM+1)"))) + ylab("HW (ms)") + 
+  scale_x_continuous(breaks = seq(0, 11, 3), limits = c(0, 11)) + 
+  scale_y_continuous(breaks = seq(0, 1.2, 0.4), limits = c(0, 1.2)) +  ## ticks of axis
+  ggtitle(sc_HW_Kcnc1_title) + 
+  labs(color = "cell type", size = "subtype size") + 
+  theme(axis.line = element_line(linewidth = 0.7), ## width of axis
+        axis.text = element_text(size = 20), 
+        axis.title = element_text(size = 25), 
+        plot.title = element_text(size = 30, face = "italic"), 
+        legend.text = element_text(size = 25), 
+        legend.title = element_text(size = 25)) +
+  coord_fixed(ratio = 8) 
+
+sc_HW_Kcnc1
+
+```
+
+
+```{r}
+# function for T-type trimmed mean bubble plot
+func_Ttype_bubble_ggplot <- function(Ttype_num_med_df, gene_name, ephy = "HW/AI", save_plot = F) {
+  # plot the scatter plot and fitted line, return the p-value, R-squred of lm result
+  w_df <- Ttype_num_med_df[, c("cell_type", "sample_size", ephy, gene_name)]
+  
+  # lm for the given ephy ~ gene
+  col_ephy <- w_df[,ephy]
+  col_gene <- w_df[,gene_name]
+  col_ss <- w_df$sample_size
+  
+  Ttype_w_lm <- lm(col_ephy ~ col_gene, weights = col_ss)
+  sum_Ttype_w_lm <- summary(Ttype_w_lm)
+  
+  lm_df <- as.data.frame(matrix(nrow = 1, ncol = 3))
+  colnames(lm_df) <- c("p_value", "R_squared", "slope")
+  rownames(lm_df) <- gene_name
+  lm_df[1, ] <- c(sum_Ttype_w_lm$coefficients[2,4], sum_Ttype_w_lm$r.squared, sum_Ttype_w_lm$coefficients[2,1])
+  
+  print(lm_df)
+  
+  w_df$i_pred <- predict(Ttype_w_lm)
+  lm_ggplot <- ggplot(data = w_df, aes(x = .data[[gene_name]], y = .data[[ephy]])) + 
+    geom_point(aes(color = cell_type, size = sample_size), alpha = 0.75) + 
+    scale_size(range = c(0,6), limits = c(0,125)) + 
+    scale_color_manual(values = c("#0000ff", "#00ff00")) + 
+    geom_line(aes(y = i_pred), colour = "#000000", linewidth = 0.7) + 
+    ggtitle(paste(ephy, "~", gene_name, ", "))
+  
+  
+  if (save_plot) {
+    ggsave(filename = paste("Output_Data/Ttype_weighted/pvsst_bubble_", ephy, "_", gene_name, ".png", sep = ""), plot = lm_ggplot, width = 6, height = 4)
+  }
+  
+  return(lm_ggplot)
+  
+}
+
+```
+
+
+```{r}
+Ttype_HW_Kcnc1 <- func_Ttype_bubble_ggplot(V1_pvsst_Ttype_num_trim_fitting_logcpm_df, gene_name = "Kcnc1", ephy = "HW")
+
+Ttype_HW_Kcnc1_title <- expression(paste("Kv3.1(", italic("Kcnc1"), ")", sep = ""))
+
+Ttype_HW_Kcnc1  <- Ttype_HW_Kcnc1 + theme_classic() + xlab(expression(paste(log[2], "(CPM+1)"))) + ylab("HW (ms)") + 
+  scale_x_continuous(breaks = seq(0, 10, 3), limits = c(0, 11)) +
+  scale_y_continuous(breaks = seq(0, 1.2, 0.4), limits = c(0, 1.2)) +  ## ticks of axis
+  ggtitle(Ttype_HW_Kcnc1_title) + 
+  labs(color = "cell type", size = "subtype size") + 
+  theme(axis.line = element_line(linewidth = 0.9), ## width of axis
+        axis.text = element_text(size = 20), 
+        axis.title = element_text(size = 25), 
+        plot.title = element_text(size = 30, face = "italic"), 
+        legend.text = element_text(size = 20), 
+        legend.title = element_text(size = 20)) + 
+  guides(color = guide_legend(override.aes = list(size = 3))) + 
+  coord_fixed(ratio = 8)  +
+  annotate("text", x = 1.7, y = 1.1, label = expression(italic("p") == 1.5e-10), size = 6) +
+  annotate("text", x = 1.7, y = 1.0, label = expression(R^2 == 0.76), size = 6) +
+  annotate("text", x = 1.7, y = 0.9, label = expression(italic(k) == -0.13), size = 6)
+
+Ttype_HW_Kcnc1
+
+```
+
+```{r}
+Ttype_AI_Kcnn2 <- func_Ttype_bubble_ggplot(V1_pvsst_Ttype_num_trim_fitting_logcpm_df, gene_name = "Kcnn2", ephy = "AI")
+
+Ttype_AI_Kcnn2_title <- expression(paste("SK2(", italic("Kcnn2"), ")", sep = ""))
+
+Ttype_AI_Kcnn2  <- Ttype_AI_Kcnn2 + theme_classic() + xlab(expression(paste(log[2], "(CPM+1)"))) + ylab("dAdap") + 
+  scale_x_continuous(breaks = seq(0, 7.5, 1), limits = c(0, 7.5)) +
+  scale_y_continuous(breaks = seq(0, 1.0, 0.4), limits = c(0, 1.0)) +  ## ticks of axis
+  ggtitle(Ttype_AI_Kcnn2_title) + 
+  labs(color = "cell type", size = "subtype size") + 
+  theme(axis.line = element_line(linewidth = 0.9), ## width of axis
+        axis.text = element_text(size = 20), 
+        axis.title = element_text(size = 25), 
+        plot.title = element_text(size = 30, face = "italic"), 
+        legend.text = element_text(size = 20), 
+        legend.title = element_text(size = 20)) + 
+  guides(color = guide_legend(override.aes = list(size = 3))) + 
+  coord_fixed(ratio = 6)  +
+  annotate("text", x = 1.2, y = 0.5, label = expression(italic("p") == 0.20), size = 6) +
+  annotate("text", x = 1.2, y = 0.4, label = expression(R^2 == 0.06), size = 6) +
+  annotate("text", x = 1.2, y = 0.3, label = expression(italic(k) == -0.04), size = 6)
+
+Ttype_AI_Kcnn2
+```
+
+
+```{r}
+Ttype_AI_Kcnc1 <- func_Ttype_bubble_ggplot(V1_pvsst_Ttype_num_trim_fitting_logcpm_df, gene_name = "Kcnc1", ephy = "AI")
+
+Ttype_AI_Kcnc1_title <- expression(paste("Kv3.1(", italic("Kcnc1"), ")", sep = ""))
+
+Ttype_AI_Kcnc1  <- Ttype_AI_Kcnc1 + theme_classic() + xlab(expression(paste(log[2], "(CPM+1)"))) + ylab("dAdap") + 
+  scale_x_continuous(breaks = seq(5, 10, 2), limits = c(5, 10)) +
+  scale_y_continuous(breaks = seq(0, 1.0, 0.3), limits = c(0, 1.0)) +  ## ticks of axis
+  ggtitle(Ttype_AI_Kcnc1_title) + 
+  labs(color = "cell type", size = "subtype size") + 
+  theme(axis.line = element_line(linewidth = 0.9), ## width of axis
+        axis.text = element_text(size = 20), 
+        axis.title = element_text(size = 25), 
+        plot.title = element_text(size = 30, face = "italic"), 
+        legend.text = element_text(size = 20), 
+        legend.title = element_text(size = 20)) + 
+  guides(color = guide_legend(override.aes = list(size = 3))) + 
+  coord_fixed(ratio = 4)  +
+  annotate("text", x = 6, y = 0.3, label = expression(italic("p") == 2.84e-4), size = 6) +
+  annotate("text", x = 6, y = 0.2, label = expression(R^2 == 0.40), size = 6) +
+  annotate("text", x = 6, y = 0.1, label = expression(italic(k) == -0.14), size = 6)
+
+Ttype_AI_Kcnc1
+```
+
+```{r}
+Ttype_AI_Cacna1g <- func_Ttype_bubble_ggplot(V1_pvsst_Ttype_num_trim_fitting_logcpm_df, gene_name = "Cacna1g", ephy = "AI")
+
+Ttype_AI_Cacna1g_title <- expression(paste("Cav3.1(", italic("Cacna1g"), ")", sep = ""))
+
+Ttype_AI_Cacna1g  <- Ttype_AI_Cacna1g + theme_classic() + xlab(expression(paste(log[2], "(CPM+1)"))) + ylab("dAdap") + 
+  scale_x_continuous(breaks = seq(0, 7, 1), limits = c(0, 7.5)) +
+  scale_y_continuous(breaks = seq(0, 1.0, 0.4), limits = c(0, 1.0)) +  ## ticks of axis
+  ggtitle(Ttype_AI_Cacna1g_title) + 
+  labs(color = "cell type", size = "subtype size") + 
+  theme(axis.line = element_line(linewidth = 0.9), ## width of axis
+        axis.text = element_text(size = 20), 
+        axis.title = element_text(size = 25), 
+        plot.title = element_text(size = 30, face = "italic"), 
+        legend.text = element_text(size = 20), 
+        legend.title = element_text(size = 20)) + 
+  guides(color = guide_legend(override.aes = list(size = 3))) + 
+  coord_fixed(ratio = 7)  +
+  annotate("text", x = 1.3, y = 0.9, label = expression(italic("p") == 3.3e-6), size = 6) +
+  annotate("text", x = 1.3, y = 0.8, label = expression(R^2 == 0.53), size = 6) +
+  annotate("text", x = 1.3, y = 0.7, label = expression(italic(k) == 0.10), size = 6)
+
+Ttype_AI_Cacna1g
+```
+
+
+```{r}
+Ttype_AI_HW <- func_Ttype_bubble_ggplot(V1_pvsst_Ttype_num_trim_fitting_logcpm_df, gene_name = "HW", ephy = "AI")
+
+Ttype_AI_HW_title <- "dAdap ~ HW (ms)"
+
+Ttype_AI_HW  <- Ttype_AI_HW + theme_classic() + xlab("HW (ms)") + ylab("dAdap") + 
+  scale_x_continuous(breaks = seq(0, 1, 0.2), limits = c(0.15, 0.8)) + 
+  scale_y_continuous(breaks = seq(0, 1.2, 0.3), limits = c(0, 1.0)) +  ## ticks of axis
+  ggtitle(Ttype_AI_HW_title) + 
+  labs(color = "cell type", size = "subtype size") + 
+  theme(axis.line = element_line(linewidth = 0.9), ## width of axis
+        axis.text = element_text(size = 20), 
+        axis.title = element_text(size = 25), 
+        plot.title = element_text(size = 25), 
+        legend.text = element_text(size = 20), 
+        legend.title = element_text(size = 20)) + 
+  guides(color = guide_legend(override.aes = list(size = 3))) + 
+  coord_fixed(ratio = 0.6)  +
+  annotate("text", x = 0.27, y = 0.9, label = expression(italic("p") == 1.0e-3), size = 6) +
+  annotate("text", x = 0.27, y = 0.8, label = expression(R^2 == 0.32), size = 6) +
+  annotate("text", x = 0.27, y = 0.7, label = expression(italic(k) == 0.89), size = 6)
+
+Ttype_AI_HW
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

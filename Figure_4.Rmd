@@ -1,0 +1,582 @@
+---
+title: "Figure 4"
+author: "Yijie"
+date: "2025-08-11"
+output: html_document
+---
+
+Based on Patchseq_data_preparing.Rmd (including data processing, quality control, weighted linear regression, and differential expression analysis) \
+
+```{r}
+venn_AIHWDE <- venn.diagram(list(V1_AI = V1_all_gene_AI_wlm_df_highly$gene_name, 
+                  V1_HW = V1_all_gene_HW_wlm_df_highly$gene_name, 
+                  V1_DEGs = rownames(V1_DEGs_df)), 
+             fill = c("#EB716B", "#79ADD6", "#EE8227"), 
+             category.names = c("Adap", "Half-width", "DEGs"), 
+             alpha = c(0.5, 0.5, 0.5), 
+             cex = 2.5,
+             cat.cex = 2.5, 
+             cat.dist = c(-0.05, -0.05, -0.03), 
+             cat.pos = c(325, 30, 180), 
+             imagetype = "svg", 
+             filename = NULL
+             )
+grid.arrange(venn_AIHWDE)
+```
+
+```{r}
+# define a function to help tell whether a given gene is DEGs, Adap-related, or/and HW-related
+func_venn_location <- function(gene_name, DEGs_list = rownames(V1_DEGs_df), 
+                               Adap_list = V1_all_gene_AI_wlm_df_highly$gene_name, 
+                               HW_list = V1_all_gene_HW_wlm_df_highly$gene_name) {
+  bool_DEGs <- gene_name %in% DEGs_list
+  bool_Adap <- gene_name %in% Adap_list
+  bool_HW <- gene_name %in% HW_list
+  
+  return_string <- NA
+  
+  if(bool_DEGs & bool_Adap & bool_HW) {
+    return_string <- "Triple! DEGs & Adap & Half-width highly correlated"
+    print(paste(gene_name, return_string))
+  } else if (bool_DEGs & bool_Adap) {
+    return_string <- "DEGS & Adap highly correlated"
+    print(paste(gene_name, "DEGS & Adap highly correlated"))
+  } else if (bool_DEGs & bool_HW) {
+    return_string <-"DEGs & Half-width highly correlated"
+    print(paste(gene_name, "DEGs & Half-width highly correlated"))
+  } else if (bool_Adap & bool_HW) {
+    return_string <- "Adap & Half-width highly correlated"
+    print(paste(gene_name, "Adap & Half-width highly correlated"))
+  } else if (bool_DEGs | bool_Adap | bool_HW) {
+    signif_list <- c("DEGs", "Adap highly correalted", "Half-width highly correlated")
+    signif_group <- signif_list[which(c(bool_DEGs, bool_Adap, bool_HW))]
+    return_string <- signif_group
+    print(paste(gene_name, signif_group))
+  } else {
+    return_string <- "not at all"
+    print(paste(gene_name, "not at all"))
+  }
+  
+  return(return_string)
+} 
+
+```
+
+```{r}
+# a function to provide a data frame about AI+/-. HW+/- and DE+/-
+func_venn_location_list <- function(gene_list, DEGs_list = rownames(V1_DEGs_df), 
+                               Adap_list = V1_all_gene_AI_wlm_df_highly$gene_name, 
+                               HW_list = V1_all_gene_HW_wlm_df_highly$gene_name) {
+  venn_df <- as.data.frame(matrix(nrow = length(gene_list), ncol = 3))
+  rownames(venn_df) <- gene_list
+  colnames(venn_df) <- c("DE", "Adap", "HW")
+  
+  for(i in 1:length(gene_list)) {
+    venn_df[i, "DE"] <- ifelse(gene_list[i] %in% DEGs_list, "+", "-")
+    venn_df[i, "Adap"] <- ifelse(gene_list[i] %in% Adap_list, "+", "-")
+    venn_df[i, "HW"] <- ifelse(gene_list[i] %in% HW_list, "+", "-")
+  }
+  
+  return(venn_df)
+  
+  }
+
+```
+
+```{r}
+# ion channel coding genes and bubble plot
+
+# select genes, then bubble plot
+ion_gene_list <- c("Kcnc1", "Kcnc2", "Kcnc3", "Kcnc4", 
+                   "Scn1a", "Scn2a1", "Scn3a", "Scn5a", "Scn8a", "Scn9a", "Scn11a", "Scn1b", 
+                   "Kcnn1", "Kcnn2", "Kcnn3", 
+                   "Cacna1a", "Cacna1b", "Cacna1c", "Cacna1d", "Cacna1e", "Cacna1f", "Cacna1g", "Cacna1h", "Cacna1i")
+
+# another table that label all selected ion channel coding gene's channel type, regardless of whether the gene is remained
+ion_gene_info_df <- data.frame(gene_name = ion_gene_list, 
+                               ion_channel_name = c("Kv3.1", "Kv3.2", "Kv3.3", "Kv3.4", 
+                                                    "Nav1.1", "Nav1.2a", "Nav1.3a", "Nav1.5a", "Nav1.6a", "Nav1.7a", "Nav1.9a", "Nav1.1b", 
+                                                    "SK1", "SK2", "SK3", 
+                                                    "Cav2.1", "Cav2.2", "Cav1.2", "Cav1.3", "Cav2.3", "Cav1.4", "Cav3.1", "Cav3.2", "Cav3.3"), 
+                               ion_channel_type = rep(c("Kv3", "Nav", "SK", "Cav"), c(4,8,3,9)), 
+                               row.names = ion_gene_list)
+```
+
+
+```{r}
+DEGs_AI_highly_merge_df <- merge(V1_all_gene_AI_wlm_df_highly, V1_DEGs_df, by = 'row.names', all = F)
+rownames(DEGs_AI_highly_merge_df) <- DEGs_AI_highly_merge_df[, 1]
+DEGs_AI_highly_merge_df <- DEGs_AI_highly_merge_df[, -1]
+
+DEGs_AI_highly_merge_df$negative_lg_wlm_FDR <- -log10(DEGs_AI_highly_merge_df$V1_AI_FDR)
+DEGs_AI_highly_merge_df$HW_highly <- ifelse(rownames(DEGs_AI_highly_merge_df) %in% V1_all_gene_HW_wlm_df_highly$gene_name, 
+                                            "dAdap+/HW+", "dAdap+/HW-")
+```
+
+
+```{r}
+DEGs_AI_highly_merge_no_lable_gene_df <- DEGs_AI_highly_merge_df[-which(DEGs_AI_highly_merge_df$gene_name %in% c(ion_gene_list, "Grm7", "Hcn1", "Grm1", "Ryr3", "Kcnh7", "Syt17", "Pvalb", "Sst")), ]
+# DEGs_AI_highly_merge_only_label_gene_df <- DEGs_AI_highly_merge_df[which(DEGs_AI_highly_merge_df$gene_name %in% c(ion_gene_list, "Grm7", "Hcn1", "Grm1", "Ryr3", "Kcnh7", "Syt17", "Pvalb", "Sst")), ]
+
+# modified on 2024.4.14, add some genes that need to be labeled
+DEGs_AI_highly_merge_only_label_gene_df <- DEGs_AI_highly_merge_df[which(DEGs_AI_highly_merge_df$gene_name %in% c(ion_gene_list, "Grm7", "Hcn1", "Grm1", "Ryr3", "Kcnh7", "Syt17", "Pvalb", "Sst", "Kcnq5", "Kcnip2", "Kcnmb4")), ]
+
+```
+
+
+
+```{r}
+# Calculate the max x value across both data frames and add buffer
+x_max <- max(
+  max(DEGs_AI_highly_merge_no_lable_gene_df$negative_lg_wlm_FDR, na.rm = TRUE),
+  max(DEGs_AI_highly_merge_only_label_gene_df$negative_lg_wlm_FDR, na.rm = TRUE)
+)
+x_max_extended <- x_max + 0.5  # Add a buffer to avoid cutoff
+
+# Plot
+DEGs_AI_highly_plot <- ggplot() + 
+  
+  geom_point(data = DEGs_AI_highly_merge_no_lable_gene_df, 
+             aes(x = negative_lg_wlm_FDR, y = log2FoldChange, color = HW_highly), 
+             alpha = 0.8) + 
+  geom_point(data = DEGs_AI_highly_merge_only_label_gene_df, 
+             aes(x = negative_lg_wlm_FDR, y = log2FoldChange, fill = HW_highly), 
+             shape = 21, size = 3, color = 'black', stroke = 1.5, show.legend = FALSE) + 
+  geom_label_repel(data = DEGs_AI_highly_merge_only_label_gene_df, 
+                   aes(x = negative_lg_wlm_FDR, y = log2FoldChange, label = gene_name, color = HW_highly), 
+                   size = 5, 
+                   box.padding = 1, point.padding = 0.1, 
+                   show.legend = FALSE) + 
+  scale_color_manual(values = c("#f87269", "#00bfc4")) + 
+  scale_fill_manual(values = c("#f87269", "#00bfc4")) + 
+  
+  scale_x_continuous(
+    expand = c(0, 0),
+    limits = c(0, x_max_extended),
+    breaks = scales::pretty_breaks(n = 5)
+  ) +
+
+  xlab(expression(paste("-lg", "(wlm q-value)"))) + 
+  ylab(expression(paste(log[2], "FoldChange", sep = ""))) + 
+  labs(color = "Half-width correlation") + 
+  theme_classic() + 
+  guides(color = guide_legend(override.aes = list(size = 3))) + 
+  theme(
+    axis.line.x = element_line(linewidth = 1.5),
+    axis.line.y = element_line(linewidth = 1.5),
+    axis.text = element_text(size = 25), 
+    axis.title = element_text(size = 25), 
+    plot.title = element_text(size = 30, face = "italic"), 
+    legend.text = element_text(size = 25), 
+    legend.title = element_text(size = 25)
+  ) + 
+  coord_fixed(ratio = 0.25)
+
+# Print plot
+DEGs_AI_highly_plot
+
+
+```
+
+```{r}
+# interactive version
+p <- plot_ly() %>%
+  add_trace(
+    data = DEGs_AI_highly_merge_no_lable_gene_df,
+    x = ~negative_lg_wlm_FDR,
+    y = ~log2FoldChange,
+    type = 'scatter',
+    mode = 'markers',
+    color = ~HW_highly,
+    colors = c("#f87269", "#00bfc4"),
+    text = ~gene_name,
+    hoverinfo = 'text',
+    marker = list(opacity = 0.8, size = 8)
+  ) %>%
+  add_trace(
+    data = DEGs_AI_highly_merge_only_label_gene_df,
+    x = ~negative_lg_wlm_FDR,
+    y = ~log2FoldChange,
+    type = 'scatter',
+    mode = 'markers',
+    text = ~gene_name,
+    hoverinfo = 'text',
+    color = ~HW_highly,  # Add color mapping to maintain red/green fill
+    colors = c("#f87269", "#00bfc4"),
+    marker = list(
+      symbol = 'circle',
+      size = 10,
+      line = list(width = 3, color = 'black')  # Black outline with thicker line
+    ),
+    name = "Marked genes in main figure",  # Add name for legend entry
+    showlegend = TRUE
+  ) %>%
+  layout(
+    xaxis = list(
+      title = list(
+        text = "-lg(q<sub>WLR</sub>)",  # Using HTML subscript
+        font = list(size = 25)
+      ),
+      tickfont = list(size = 20),
+      showline = TRUE,
+      linewidth = 2,
+      linecolor = 'black',
+      mirror = FALSE
+    ),
+    yaxis = list(
+      title = list(
+        text = "Δlog<sub>2</sub>CPM",  # Using triangle delta symbol and subscript
+        font = list(size = 25)
+      ),
+      tickfont = list(size = 20),
+      showline = TRUE,
+      linewidth = 2,
+      linecolor = 'black',
+      mirror = FALSE,
+      zeroline = FALSE
+    ),
+    legend = list(
+      title = list(text = "<b>Correlation</b>"), 
+      font = list(size = 20),
+      # Add annotation about marked genes
+      x = 1.02, y = 1
+    )
+  )
+p
+```
+
+
+
+```{r}
+func_Ttype_bubble_ggplot <- function(Ttype_num_med_df, gene_name, ephy = "HW/AI", save_plot = F) {
+  # plot the scatter plot and fitted line, return the p-value, R-squred of lm result
+  w_df <- Ttype_num_med_df[, c("cell_type", "sample_size", ephy, gene_name)]
+  
+  # lm for the given ephy ~ gene
+  col_ephy <- w_df[,ephy]
+  col_gene <- w_df[,gene_name]
+  col_ss <- w_df$sample_size
+  
+  # lm_formula <- as.formula(paste(ephy, "~", gene_name, sep = ""))
+  Ttype_w_lm <- lm(col_ephy ~ col_gene, weights = col_ss)
+  sum_Ttype_w_lm <- summary(Ttype_w_lm)
+
+  lm_df <- as.data.frame(matrix(nrow = 1, ncol = 3))
+  colnames(lm_df) <- c("p_value", "R_squared", "slope")
+  rownames(lm_df) <- gene_name
+  lm_df[1, ] <- c(sum_Ttype_w_lm$coefficients[2,4], sum_Ttype_w_lm$r.squared, sum_Ttype_w_lm$coefficients[2,1])
+  
+  print(lm_df)
+  
+  w_df$i_pred <- predict(Ttype_w_lm)
+  lm_ggplot <- ggplot(data = w_df, aes(x = .data[[gene_name]], y = .data[[ephy]])) + 
+    geom_point(aes(color = cell_type, size = sample_size), alpha = 0.75) + 
+    scale_size(range = c(0,6)) + 
+    # scale_color_manual(values = c("#f87269", "#00bfc4")) + 
+    scale_color_manual(values = c("#0000ff", "#00ff00")) + 
+    geom_line(aes(y = i_pred), colour = "#000000", linewidth = 0.7) + 
+    ggtitle(paste(ephy, "~", gene_name, ", "))
+  
+  
+  if (save_plot) {
+    ggsave(filename = paste("Output_Data/Ttype_weighted/pvsst_bubble_", ephy, "_", gene_name, ".png", sep = ""), plot = lm_ggplot, width = 6, height = 4)
+  }
+  
+  return(lm_ggplot)
+  
+}
+```
+
+
+```{r}
+Ttype_AI_Ryr3 <- func_Ttype_bubble_ggplot(V1_pvsst_Ttype_num_trim_fitting_logcpm_df, gene_name = "Ryr3", ephy = "AI")
+
+Ttype_AI_Ryr3_title <- expression(italic("Ryr3"))
+
+Ttype_AI_Ryr3  <- Ttype_AI_Ryr3 + theme_classic() + xlab(expression(paste(log[2], "(CPM+1)"))) + ylab("dAdap") + 
+  scale_x_continuous(breaks = seq(0, 8.5, 2), limits = c(-0.5, 9)) +
+  scale_y_continuous(breaks = seq(0, 1.0, 0.3), limits = c(0, 1.0)) +  ## ticks of axis
+  ggtitle(Ttype_AI_Ryr3_title) + 
+  labs(color = "cell type", size = "subtype size") + 
+  theme(axis.line = element_line(linewidth = 0.7), ## width of axis
+        axis.text = element_text(size = 20), 
+        axis.title = element_text(size = 25), 
+        plot.title = element_text(size = 30, face = "italic"), 
+        legend.text = element_text(size = 20), 
+        legend.title = element_text(size = 20)) + 
+  guides(color = guide_legend(override.aes = list(size = 3))) + 
+  coord_fixed(ratio = 7)  +
+  annotate("text", x = 7, y = 0.35, label = expression(italic("p") == 6.32e-7), size = 6) +
+  annotate("text", x = 7, y = 0.25, label = expression(R^2 == 0.58), size = 6) +
+  annotate("text", x = 7, y = 0.15, label = expression(italic(k) == 0.06), size = 6)
+
+Ttype_AI_Ryr3
+```
+
+```{r}
+Ttype_AI_Kcnh7 <- func_Ttype_bubble_ggplot(V1_pvsst_Ttype_num_trim_fitting_logcpm_df, gene_name = "Kcnh7", ephy = "AI")
+
+Ttype_AI_Kcnh7_title <- expression(italic("Kcnh7"))
+
+Ttype_AI_Kcnh7  <- Ttype_AI_Kcnh7 + theme_classic() + xlab(expression(paste(log[2], "(CPM+1)"))) + ylab("dAdap") + 
+  scale_x_continuous(breaks = seq(0, 12, 2.5), limits = c(0, 11)) +
+  scale_y_continuous(breaks = seq(0, 1.0, 0.3), limits = c(0, 1.1)) +  ## ticks of axis
+  ggtitle(Ttype_AI_Kcnh7_title) + 
+  labs(color = "cell type", size = "subtype size") + 
+  theme(axis.line = element_line(linewidth = 0.7), ## width of axis
+        axis.text = element_text(size = 20), 
+        axis.title = element_text(size = 25), 
+        plot.title = element_text(size = 30, face = "italic"), 
+        legend.text = element_text(size = 20), 
+        legend.title = element_text(size = 20)) + 
+  guides(color = guide_legend(override.aes = list(size = 3))) + 
+  coord_fixed(ratio = 9)  + 
+  annotate("text", x = 2.5, y = 0.35, label = expression(italic("p") == 6.51e-8), size = 6) + 
+  annotate("text", x = 2.5, y = 0.25, label = expression(R^2 == 0.64), size = 6) + 
+  annotate("text", x = 2.5, y = 0.15, label = expression(italic(k) == -0.08), size = 6)
+
+Ttype_AI_Kcnh7
+```
+
+
+Gene Ontology enrichment analysis: \
+```{r}
+func_gene_list_to_GO_MF_enrichment <- function(gene_list, file_name, save_xlsx = FALSE) {
+  
+  enter_id <- bitr(gene_list, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = "org.Mm.eg.db")
+  
+  # MF
+  GO_MF <- enrichGO(
+    gene = enter_id$ENTREZID,
+    keyType = "ENTREZID",
+    OrgDb = org.Mm.eg.db,
+    ont = "MF",
+    pAdjustMethod = "BH",
+    pvalueCutoff = 0.01,
+    qvalueCutoff = 0.05,
+    readable = TRUE
+  )
+  
+  if(save_xlsx) {
+    write.xlsx(GO_MF@result, paste("Output_Data/1128_figure4_GO/", file_name, ".xlsx", sep = ""), 
+               sheetName = "Molecular_Function", col.names = T, row.names = T, append = T)
+  }
+  
+  return(GO_MF)
+  
+}
+
+
+func_gene_list_to_GO_enrichment <- function(gene_list, file_name) {
+  
+  enter_id <- bitr(gene_list, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = "org.Mm.eg.db")
+  
+  # CC
+  GO_CC <- enrichGO(
+    gene = enter_id$ENTREZID,
+    keyType = "ENTREZID",
+    OrgDb = org.Mm.eg.db,
+    ont = "CC",
+    pAdjustMethod = "BH",
+    pvalueCutoff = 0.01,
+    qvalueCutoff = 0.05,
+    readable = TRUE
+  )
+  write.xlsx(GO_CC@result, paste("2025_revision_data/suppsheet5_", file_name, ".xlsx", sep = ""), sheetName = "Cellcular_Component", col.names = T, row.names = T, append = T)
+  
+  # MF
+  GO_MF <- enrichGO(
+    gene = enter_id$ENTREZID,
+    keyType = "ENTREZID",
+    OrgDb = org.Mm.eg.db,
+    ont = "MF",
+    pAdjustMethod = "BH",
+    pvalueCutoff = 0.01,
+    qvalueCutoff = 0.05,
+    readable = TRUE
+  )
+  write.xlsx(GO_MF@result, paste("2025_revision_data/suppsheet5_", file_name, ".xlsx", sep = ""), sheetName = "Molecular_Function", col.names = T, row.names = T, append = T)
+  
+  # BP
+  GO_BP <- enrichGO(
+    gene = enter_id$ENTREZID,
+    keyType = "ENTREZID",
+    OrgDb = org.Mm.eg.db,
+    ont = "BP",
+    pAdjustMethod = "BH",
+    pvalueCutoff = 0.01,
+    qvalueCutoff = 0.05,
+    readable = TRUE
+  )
+  write.xlsx(GO_CC@result, paste("2025_revision_data/suppsheet5_", file_name, ".xlsx", sep = ""), sheetName = "Biological_Process", col.names = T, row.names = T, append = T)
+  
+}
+
+
+
+```
+
+```{r}
+# GO enrichment and visualization for V1 Adap & DEGs genes
+library(clusterProfiler)
+library(org.Mm.eg.db)
+library(xlsx)
+
+```
+
+```{r}
+# GO enrichment, molecular function
+## DEGs_AI_highly_merge_df
+DEGs_AI_intersect_gene_list <- intersect(rownames(V1_DEGs_df), V1_all_gene_AI_wlm_df_highly$gene_name)
+func_gene_list_to_GO_enrichment(DEGs_AI_intersect_gene_list, "V1_DEGs_AI_GO_all")
+DEGs_AI_intersect_GO_MF <- func_gene_list_to_GO_MF_enrichment(DEGs_AI_intersect_gene_list, "DEGs_AI_GO_MF")
+
+```
+
+
+```{r}
+DEGs_AI_MF_result <- arrange(DEGs_AI_intersect_GO_MF@result, p.adjust)
+View(DEGs_AI_MF_result)
+```
+
+```{r}
+# the selected GO terms: 
+sub_GO_MF_IDs <- c("GO:0022803", 
+                   "GO:0046873", 
+                   "GO:0005249", 
+                   "GO:0015276", 
+                   "GO:0005262", 
+                   "GO:0005267", 
+                   "GO:0015079", 
+                   "GO:0015085", 
+                   "GO:0005272", 
+                   "GO:0005248", 
+                   "GO:0005539", 
+                   "GO:0030594", 
+                   "GO:0005543", 
+                   "GO:0098960", 
+                   "GO:0050839")
+
+```
+
+
+```{r}
+sub_DEGs_AI_intersect_GO_MF <- DEGs_AI_intersect_GO_MF
+sub_DEGs_AI_intersect_GO_MF@result <- DEGs_AI_intersect_GO_MF@result[DEGs_AI_intersect_GO_MF@result$ID %in% sub_GO_MF_IDs, ]
+sub_DEGs_AI_intersect_GO_MF@geneSets <- DEGs_AI_intersect_GO_MF@geneSets[sub_GO_MF_IDs]
+
+sub_DEGs_AI_intersect_GO_MF_result <- sub_DEGs_AI_intersect_GO_MF@result
+sub_DEGs_AI_intersect_GO_MF_result$Description <- factor(sub_DEGs_AI_intersect_GO_MF_result$Description, 
+                                        levels = sub_DEGs_AI_intersect_GO_MF_result$Description)
+
+```
+
+```{r}
+# include additional genes
+rev_DEGs_AI_MF_subresult_extra_gene <- sub_DEGs_AI_intersect_GO_MF_result
+# parse the gene list
+rev_DEGs_AI_MF_subresult_extra_gene$gene_vec <- strsplit(rev_DEGs_AI_MF_subresult_extra_gene$geneID, "/")
+# count ion channel genes per GO term
+rev_DEGs_AI_MF_subresult_extra_gene$ion_channel_count <- sapply(rev_DEGs_AI_MF_subresult_extra_gene$gene_vec, function(glist) {
+  sum(glist %in% DEGs_AI_highly_merge_only_label_gene_df$gene_name)
+})
+# add ratio label
+rev_DEGs_AI_MF_subresult_extra_gene$ion_ratio_label <- paste0(rev_DEGs_AI_MF_subresult_extra_gene$ion_channel_count, "/", rev_DEGs_AI_MF_subresult_extra_gene$Count)
+
+```
+
+
+```{r}
+top_go_extra_gene <- rev_DEGs_AI_MF_subresult_extra_gene
+top_go_extra_gene$Description <- factor(top_go_extra_gene$Description, levels = rev(top_go_extra_gene$Description))  # keep order
+
+top_go_extra_gene$ion_ratio <- sapply(strsplit(top_go_extra_gene$ion_ratio_label, "/"), function(x) {
+  as.numeric(x[1]) / as.numeric(x[2])
+})
+top_go_extra_gene$ion_ratio_label <- sprintf("%.2f", top_go_extra_gene$ion_ratio)
+
+# Ensure top_go$Description is ordered correctly
+top_go_extra_gene$Description <- factor(top_go_extra_gene$Description, levels = rev(top_go_extra_gene$Description))
+
+# Create the bubble plot
+bubble_plot_extra_gene <- ggplot(top_go_extra_gene, aes(x = Count, y = Description)) + 
+  geom_segment(aes(x = 0, xend = Count, y = Description, yend = Description, color = -log10(p.adjust)),
+               linewidth = 1) + 
+  geom_point(aes(size = Count, color = -log10(p.adjust))) +
+  scale_color_gradient(low = "blue", high = "red", name = expression(-log[10](P.adjust))) +
+  scale_size(name = "Gene Count") + 
+  scale_x_continuous(limits = c(0,45), expand = c(0, 0)) + 
+  labs(x = "Gene Count", y = "GO Molecular Function", title = "DEGs&Adap, Molecular Function Top15") +
+  theme_bw() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.y = element_text(size = 12), 
+    axis.text.x = element_text(size = 12), 
+    legend.position = "bottom",
+    legend.box = "horizontal"
+  )
+
+# Create the bar plot with the same y-axis structure
+bar_plot_extra_gene <- ggplot(top_go_extra_gene, aes(y = Description)) +
+  geom_tile(aes(x = 1, fill = ion_ratio), width = 0.9, height = 0.8) +
+  geom_text(aes(x = 1, label = ion_ratio_label), color = "white", size = 4) +
+  scale_fill_gradient(low = "grey", high = "darkorange", name = "Ion Channel Ratio") +
+  scale_y_discrete(limits = levels(top_go_extra_gene$Description)) +
+  scale_x_continuous(expand = c(0, 0)) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    panel.grid = element_blank()
+  )
+
+# Combine the main plots first
+main_plots_extra_gene <- plot_grid(
+  bubble_plot_extra_gene + theme(legend.position = "none"), 
+  bar_plot_extra_gene + theme(legend.position = "none"), 
+  align = "h",
+  axis = "tb",
+  rel_widths = c(5, 0.8)
+)
+
+# Create separate legends in vertical format
+bubble_legend_extra_gene <- get_legend(
+  bubble_plot_extra_gene + 
+    theme(legend.position = "right",
+          legend.direction = "vertical",
+          legend.box = "vertical")
+)
+
+bar_legend_extra_gene <- get_legend(
+  bar_plot_extra_gene + 
+    theme(legend.position = "right",
+          legend.direction = "vertical")
+)
+
+# Stack the legends vertically
+legend_column_extra_gene <- plot_grid(
+  bubble_legend_extra_gene, 
+  bar_legend_extra_gene, 
+  ncol = 1, 
+  rel_heights = c(2, 1)
+)
+
+# Combine plots with legends on the right
+final_plot_extra_gene <- plot_grid(
+  main_plots_extra_gene, 
+  legend_column_extra_gene, 
+  ncol = 2, 
+  rel_widths = c(10, 1.5)
+)
+
+# Display the plot
+final_plot_extra_gene
+```
+
+
+
+
+
+
+

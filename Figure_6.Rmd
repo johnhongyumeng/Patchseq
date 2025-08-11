@@ -1,0 +1,249 @@
+---
+title: "Figure 6"
+author: "Yijie"
+date: "2025-08-11"
+output: html_document
+---
+
+Macaque monkey data set \
+
+```{r}
+# load in data from csv files
+## for main figures
+Pyr_df <- read.csv("2025_revision_data/figureMacaque/gene_expression_Pyr.csv", header = T, row.names = 1)
+Pv_df <- read.csv("2025_revision_data/figureMacaque/gene_expression_PV.csv", header = T, row.names = 1)
+
+## for supp
+V1_df <- read.csv("2025_revision_data/figureMacaque/gene_expression_V1.csv",  header = T, row.names = 1)
+PFC_df <- read.csv("2025_revision_data/figureMacaque/gene_expression_PFC.csv",  header = T, row.names = 1)
+
+```
+
+
+```{r}
+# ion channel info df for channel family label
+ion_gene_list <- rownames(PFC_df)[-7]
+
+ion_gene_info_df <- data.frame(gene_name = ion_gene_list, 
+                               ion_channel_type = rep(c("Cav", "Kv3", "M-type K", "Nav", "Sk"), c(4,2,1,6,3)), 
+                               row.names = ion_gene_list)
+
+```
+
+```{r}
+func_Macaque_bar_plot_foldchange <- function(gene_expression_df, gene_info_df, 
+                                             positive_colname = "PFC", negative_colname = "V1", 
+                                             plot_title = NULL) {
+  # Data preparation
+  original_gene_order <- rownames(gene_info_df)
+  gg_df <- merge(gene_expression_df, gene_info_df, by = "row.names", sort = F)
+  colnames(gg_df)[1] <- "gene_name"
+  rownames(gg_df) <- gg_df$gene_name
+  
+  gene_level <- c("Cav", "Kv3", "M-type K", "Nav", "Sk")
+  list_color <- c("Cav" = "#a257e8", "Kv3" = "#e22e2a", "M-type K" = "#89cff0", "Nav" = "#e28a2a", "Sk" ="#76d51d" )
+  
+  
+  gg_df$ion_channel_type <- factor(gg_df$ion_channel_type, levels = gene_level)
+  
+  # Compute log2 fold change
+  gg_df$log2_fc <- gg_df[, positive_colname] - gg_df[, negative_colname]
+  
+  # Order by gene family
+  gg_df <- gg_df[original_gene_order, ]
+  
+  # Create plotting data
+  plot_df <- data.frame(
+    gene_name = gg_df$gene_name,
+    gene_index = 1:nrow(gg_df),
+    ion_channel_type = gg_df$ion_channel_type,
+    log2_fc = gg_df$log2_fc
+  )
+  
+  # Calculate y-axis range
+  max_log2_fc <- max(plot_df$log2_fc, na.rm = TRUE)
+  min_log2_fc <- min(plot_df$log2_fc, na.rm = TRUE)
+  y_padding <- 0.2 * max(abs(max_log2_fc), abs(min_log2_fc))
+  y_max <- max_log2_fc + y_padding
+  y_min <- min_log2_fc - y_padding
+  
+  y_label_expr <- bquote(atop(log[2]~"Fold Change ("*.(positive_colname)*"/"~.(negative_colname)*")", 
+                            "positive = higher in "*.(positive_colname)))
+  
+  # Create base plot
+  gg_bar <- ggplot(plot_df, aes(x = gene_index, y = log2_fc)) +
+    geom_bar(aes(fill = ion_channel_type),
+             stat = "identity", width = 0.7,
+             color = "black", linewidth = 0.8) +
+    geom_hline(yintercept = 0, linetype = "solid", color = "darkgray", linewidth = 0.5) +
+    scale_fill_manual(values = list_color, name = "Ion Channel Type") +
+    labs(x = expression("Genes"),
+         # y = expression(atop(log[2]~"Fold Change (SST/PV)", "positive = higher in SST")),
+         y = y_label_expr, 
+         title = plot_title) +
+    scale_x_continuous(breaks = 1:nrow(gg_df), labels = gg_df$gene_name) +
+    scale_y_continuous(limits = c(y_min, y_max)) +
+    theme_bw()
+  
+  
+  # Set gene name x-axis label colors
+  gene_colors <- list_color[as.character(gg_df$ion_channel_type)]
+  names(gene_colors) <- gg_df$gene_name
+  gg_bar <- gg_bar + theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      size = 10,
+      color = gene_colors
+    ),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    plot.title = element_text(hjust = 0, size = 14, face = "bold"),
+    plot.margin = margin(t = 15, r = 10, b = 10, l = 10, unit = "pt")
+  )
+  
+  return(gg_bar)
+}
+
+```
+
+
+```{r}
+mian_fig_Pyr <- func_Macaque_bar_plot_foldchange(Pyr_df, ion_gene_info_df, plot_title = "Pyr")
+mian_fig_Pyr
+```
+
+```{r}
+mian_fig_Pv <- func_Macaque_bar_plot_foldchange(Pv_df, ion_gene_info_df, plot_title = "Pv")
+mian_fig_Pv
+```
+
+
+```{r}
+supp_fig_V1 <- func_Macaque_bar_plot_foldchange(V1_df, ion_gene_info_df, 
+                                                positive_colname = "Pyr", negative_colname = "PV", 
+                                                plot_title = "V1")
+supp_fig_V1
+```
+
+```{r}
+supp_fig_V1_SstPv <- func_Macaque_bar_plot_foldchange(V1_df, ion_gene_info_df, 
+                                                positive_colname = "SST", negative_colname = "PV", 
+                                                plot_title = "V1")
+supp_fig_V1_SstPv
+```
+
+```{r}
+supp_fig_PFC_PyrPv <- func_Macaque_bar_plot_foldchange(PFC_df, ion_gene_info_df, 
+                                                positive_colname = "Pyr", negative_colname = "PV", 
+                                                plot_title = "PFC")
+supp_fig_PFC_PyrPv
+```
+
+```{r}
+supp_fig_PFC_SstPv <- func_Macaque_bar_plot_foldchange(PFC_df, ion_gene_info_df, 
+                                                positive_colname = "SST", negative_colname = "PV", 
+                                                plot_title = "PFC")
+supp_fig_PFC_SstPv
+```
+
+
+```{r}
+func_bar_plot_CPM <- function(gene_expression_df, gene_info_df, exp_gene = "PV", plot_title = NULL) {
+   # Data preparation - similar to original function
+  original_gene_order <- rownames(gene_info_df)
+  gg_df <- merge(gene_expression_df, gene_info_df, by = "row.names", sort = F)
+  colnames(gg_df)[1] <- "gene_name"
+  rownames(gg_df) <- gg_df$gene_name
+  
+  gene_level <- c("Cav", "Kv3", "M-type K", "Nav", "Sk")
+  list_color <- c("Cav" = "#a257e8", "Kv3" = "#e22e2a", "M-type K" = "#89cff0", "Nav" = "#e28a2a", "Sk" ="#76d51d" )
+  
+  gg_df$ion_channel_type <- factor(gg_df$ion_channel_type, levels = gene_level)
+  
+  
+  # Sort the genes by n_log_p value (ascending order)
+  gg_df <- gg_df[original_gene_order, ]
+  
+  # Create a dataframe for the bars
+  plot_df <- data.frame(
+    gene_name = gg_df$gene_name,
+    gene_index = 1:nrow(gg_df),
+    # n_log_p = gg_df$n_log_p,
+    pv_cpm = gg_df[, exp_gene], 
+    # DE_padj = gg_df$DE_padj,
+    ion_channel_type = gg_df$ion_channel_type
+  )
+  
+  # Calculate y-axis limits
+  max_pv_cpm <- max(plot_df$pv_cpm, na.rm = TRUE)
+  min_pv_cpm <- min(plot_df$pv_cpm, na.rm = TRUE)
+  y_padding <- 0.1 * (max_pv_cpm - min_pv_cpm)
+  y_max <- max_pv_cpm + y_padding
+  
+  
+  # Create the base plot
+  gg_bar <- ggplot(plot_df, aes(x = gene_index, y = pv_cpm)) +
+    geom_bar(stat = "identity", fill = "grey60",  # <- Uniform grey color
+             width = 0.7, color = "black", linewidth = 0.8) +
+    
+    geom_hline(yintercept = 0, linetype = "solid", color = "darkgray", linewidth = 0.5) +
+    
+    labs(x = expression("Genes"), 
+         y = expression(log[2]~"CPM in PV cells"),
+         title = plot_title) +
+    
+    scale_x_continuous(breaks = 1:nrow(gg_df), labels = gg_df$gene_name) +
+    scale_y_continuous(limits = c(0, y_max)) +
+    theme_bw()
+  
+  # Create gene label colors for x-axis (based on ion channel type)
+  gene_colors <- list_color[as.character(gg_df$ion_channel_type)]
+  names(gene_colors) <- gg_df$gene_name
+  
+  # Apply final theme
+  gg_bar <- gg_bar + theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      size = 10,
+      color = gene_colors
+    ),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    plot.title = element_text(hjust = 0, size = 14, face = "bold"),
+    plot.margin = margin(t = 15, r = 10, b = 10, l = 10, unit = "pt")
+  )
+  
+  return(gg_bar)
+}
+```
+
+
+```{r}
+supp_fig_V1_PvlogCPM <- func_bar_plot_CPM(V1_df, ion_gene_info_df, exp_gene = "PV", plot_title = "V1")
+supp_fig_V1_PvlogCPM
+```
+
+
+```{r}
+supp_fig_PFC_PvlogCPM <- func_bar_plot_CPM(PFC_df, ion_gene_info_df, exp_gene = "PV", plot_title = "V1")
+supp_fig_PFC_PvlogCPM
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

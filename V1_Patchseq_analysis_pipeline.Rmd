@@ -1,0 +1,255 @@
+---
+title: "Patch-seq data processing & weighted linear regression & differential expression analysis"
+author: "Yijie"
+date: "2025-08-11"
+output: html_document
+---
+
+
+```{r}
+library(Seurat)
+library(ggplot2)
+library(ggridges)
+library(ggExtra)
+library(cowplot)
+library(stringr)
+library(readxl)
+library(plotly)
+library(htmlwidgets)
+library(VennDiagram)
+library(cowplot)
+library(dplyr)
+library(xlsx)
+library(gridExtra)
+
+source("D:/2022fall/Patch-seq/1207_workflow/workflow_RNA_QC.R")
+source("D:/2022fall/Patch-seq/1207_workflow/funcs_transcriptomic.R")
+# contamination scores required
+load("Input_Data/1018_contamination_scores.RData")
+```
+
+
+
+
+```{r}
+# load in data
+fitting_V1_PV_raw_df <- read_excel("2025_revision_data/AllenV1PV_ephys_mega0701.xlsx")[, -c(1, 4, 11, 12, 13)]
+fitting_V1_SST_raw_df <- read_excel("2025_revision_data/AllenV1SST_ephys_mega0701.xlsx")[, -c(1, 4, 11, 12, 13, 14)]
+
+# meta data for V1
+metadata_V1_pv <- read.csv("Input_Data/0309_pv_metadata_nwbs.csv", header = T, check.names = F)
+metadata_V1_sst <- read.csv("Input_Data/0309_sst_metadata_nwbs.csv", header = T, check.names = F)
+
+submeta_V1_pv <- metadata_V1_pv[, c("transcriptomics_sample_id", "T-type_Label", "structure", "file_name")]
+submeta_V1_sst <- metadata_V1_sst[, c("transcriptomics_sample_id", "T-type_Label", "structure", "file_name")]
+
+# merge fitting results with T-type, layer
+V1_PV_fitting_meta_raw_df <- merge(submeta_V1_pv, fitting_V1_PV_raw_df, by = "file_name", all = T)
+V1_SST_fitting_meta_raw_df <- merge(submeta_V1_sst, fitting_V1_SST_raw_df, by = "file_name", all = T)
+
+# scRNA-seq QC and contamination score QC for V1
+V1_pv_count <- read.csv("Input_Data/0303_pv_counts.csv", header = T, check.names = F)
+rownames(V1_pv_count) <- V1_pv_count[,1]
+V1_pv_count <- V1_pv_count[, -1]
+
+V1_sst_count <- read.csv("Input_Data/0303_sst_counts.csv", header = T, check.names = F)
+rownames(V1_sst_count) <- V1_sst_count[,1]
+V1_sst_count <- V1_sst_count[, -1]
+
+# merge Patchseq pv and sst cells for Seurat quality control and normalization workflow
+V1_pv_sst_count <- merge(V1_pv_count, V1_sst_count, by = "row.names", all = T)
+rownames(V1_pv_sst_count) <- V1_pv_sst_count[,1]
+V1_pv_sst_count <- V1_pv_sst_count[, -1]
+
+# Seurat QC & CPM, then contamination related QC
+V1_basic_QC <- func_basic_QC(V1_pv_sst_count, nCount = 6e5, nFeature = 6600)
+V1_pv_CS_list <- func_CS_QC(CS_patchseq_pv, cs_threshold = 0.2)
+V1_sst_CS_list <- func_CS_QC(CS_patchseq_sst, cs_threshold = 0.2)
+V1_basic_CS_seurat <- func_CS_seurat(V1_basic_QC, CS_lists = c(V1_pv_CS_list, V1_sst_CS_list))
+V1_pvsst_cpm <- func_normalization(V1_basic_CS_seurat, method = "CPM")
+
+# merge meta, e-fitting and cpm
+## V1, rbind fitting_meta_raw_df and e-fitting QC (all 3 flags to be TRUE)
+V1_pvsst_fitting_meta_raw_df <- rbind(V1_PV_fitting_meta_raw_df, V1_SST_fitting_meta_raw_df)
+## remove NA first
+V1_pvsst_fitting_meta_df <- V1_pvsst_fitting_meta_raw_df[-which(is.na(V1_pvsst_fitting_meta_raw_df$`hero or Max`)), ]
+## keep only hero
+V1_pvsst_fitting_meta_df <- V1_pvsst_fitting_meta_df[V1_pvsst_fitting_meta_df$`hero or Max` == "hero", ]
+
+## remove NA from HW column and check
+V1_pvsst_fitting_meta_df <- V1_pvsst_fitting_meta_df[-which(is.na(V1_pvsst_fitting_meta_df$HW)), ]
+V1_pvsst_fitting_meta_df <- V1_pvsst_fitting_meta_df[-which(is.na(V1_pvsst_fitting_meta_df$AI)), ]
+colSums(is.na(V1_pvsst_fitting_meta_df))
+
+
+```
+
+
+
+
+```{r}
+# merge with gene expression
+V1_pvsst_fitting_meta_logcpm <- func_ephy_Ttype_logtNorm(V1_pvsst_fitting_meta_df, V1_pvsst_cpm)
+V1_pvsst_fitting_meta_logcpm_gene_filter <- func_each_type_non_zero_quantile(V1_pvsst_fitting_meta_logcpm, ncol_ephy = 13, quantile_cutoff = 0.1)
+```
+
+
+```{r}
+# T-type trimmed mean
+V1_pvsst_Ttype_num_trim_fitting_ephy_df <- func_Ttype_trim_mean(V1_pvsst_fitting_meta_logcpm_gene_filter, 
+                                                                remove_col_index = c(1:5, 7, 8, 12:ncol(V1_pvsst_fitting_meta_logcpm_gene_filter)), 
+                                                                group_col_name = "T-type_Label")
+
+V1_pvsst_Ttype_num_log_trim_cpm_df <- func_Ttype_recover_trim_mean(V1_pvsst_fitting_meta_logcpm_gene_filter, 
+                                                                   remove_col_index = c(1:11), 
+                                                                   group_col_name = "T-type_Label")
+
+# cbind them without duplicate cell type and sample size
+V1_pvsst_Ttype_num_trim_fitting_logcpm_df <- cbind(V1_pvsst_Ttype_num_trim_fitting_ephy_df, 
+                                                   V1_pvsst_Ttype_num_log_trim_cpm_df[, -c(1:2)])
+
+
+```
+
+```{r}
+ion_gene_list <- c("Kcnc1", "Kcnc2", "Kcnc3", "Kcnc4", 
+                   "Scn1a", "Scn2a1", "Scn3a", "Scn5a", "Scn8a", "Scn9a", "Scn11a", "Scn1b", 
+                   "Kcnn1", "Kcnn2", "Kcnn3", 
+                   "Cacna1a", "Cacna1b", "Cacna1c", "Cacna1d", "Cacna1e", "Cacna1f", 
+                   "Cacna1g", "Cacna1h", "Cacna1i")
+
+V1_ion_gene_Ttype_num_trim_fitting_logcpm_df <- func_trimed_df_select_genes(V1_pvsst_Ttype_num_trim_fitting_logcpm_df, ion_gene_list, 
+                                                                            kept_col_names = c("cell_type", 
+                                                                                               # "sample_size", 
+                                                                                               "HW", 
+                                                                                               "AI"))
+```
+
+
+```{r}
+V1_pvsst_Ttype_num_trim_fitting_logcpm_df_AIHW <- V1_pvsst_Ttype_num_trim_fitting_logcpm_df[, -c(4,5)]
+
+```
+
+```{r}
+# wlm for all genes, and BH adjust
+# previously require HPC
+# prepared function to select genes and generate df for wlm function
+func_trimed_df_select_genes <- function(Ttype_num_trim_ephy_log_df, gene_list, kept_col_names = c("cell_type", "sample_size", "AI", "HW")) {
+  # the select genes may be filtered out during the previous quality control steps
+  # if so, print the warning and return the subset data frame with the remained genes
+  # also, delete genes whose trimmed mean of all T-types are 0, and print their names
+  remained_gene_list <- gene_list[gene_list %in% colnames(Ttype_num_trim_ephy_log_df)]
+  select_Ttype_num_trim_ephy_log_df <- Ttype_num_trim_ephy_log_df[, remained_gene_list]
+  # remove genes whose all trimmed mean are 0
+  remained_Ttype_num_trim_ephy_log_df <- select_Ttype_num_trim_ephy_log_df[, colSums(select_Ttype_num_trim_ephy_log_df)>0]
+  
+  if(length(remained_gene_list) != length(gene_list)) {
+    print("Warning! Following genes are not available: ")
+    print(gene_list[!(gene_list %in% colnames(Ttype_num_trim_ephy_log_df))])
+  }
+  
+  if(ncol(remained_Ttype_num_trim_ephy_log_df) != ncol(select_Ttype_num_trim_ephy_log_df)) {
+    print("Warning! Folloing genes are removed due to their 0 trimmed mean of all T-types: ")
+    print(colnames(select_Ttype_num_trim_ephy_log_df)[colSums(select_Ttype_num_trim_ephy_log_df)<=0])
+  }
+  
+  remained_Ttype_num_trim_ephy_log_df <- cbind(Ttype_num_trim_ephy_log_df[, kept_col_names], 
+                                               remained_Ttype_num_trim_ephy_log_df)
+  
+  return(remained_Ttype_num_trim_ephy_log_df)
+}
+
+# prepared function for wlm
+func_genes_wlm_df_rerun <- function(sub_Ttype_num_trim_ephy_logcpm_df, ephy_name = "AI") {
+  # the first 4 columns should be: cell_type, sample_size, AI_cell, HW
+  # the 5th to the last columns are genes
+  if (ephy_name == "AI") { # include HW in the 4th column
+    gene_list <- colnames(sub_Ttype_num_trim_ephy_logcpm_df)[c(3, 5:ncol(sub_Ttype_num_trim_ephy_logcpm_df))]
+  } else {
+    gene_list <- colnames(sub_Ttype_num_trim_ephy_logcpm_df)[5:ncol(sub_Ttype_num_trim_ephy_logcpm_df)]
+  }
+  
+  # generate an empty data frame, each row for a gene's wlm results
+  wlm_df <- as.data.frame(matrix(nrow = length(gene_list), ncol = 5))
+  colnames(wlm_df) <- c("gene_name", "p_value", "R_squared", "slope", "n_log_p")
+  rownames(wlm_df) <- gene_list
+  wlm_df$gene_name <- gene_list
+  
+  # for loop to get p_value, R_squared and slope
+  for (i in 1:length(gene_list)) {
+    i_gene_name <- gene_list[i]
+    i_ephy <- sub_Ttype_num_trim_ephy_logcpm_df[, ephy_name]
+    i_trim_cpm <- sub_Ttype_num_trim_ephy_logcpm_df[, i_gene_name]
+    
+    # if sum(i_trim_cpm) > 0, run the wlm; else, skip to next one
+    if(sum(i_trim_cpm) > 0) {
+      i_wlm <- lm(i_ephy ~ i_trim_cpm, weights = sub_Ttype_num_trim_ephy_logcpm_df$sample_size)
+      i_sum_wlm <- summary(i_wlm)
+      wlm_df[i, 2:4] <- c(i_sum_wlm$coefficients[2,4], i_sum_wlm$r.squared, i_sum_wlm$coefficients[2,1])
+      wlm_df[i, 5] <- -log10(wlm_df[i,2])
+    } else {
+      print(paste(i_gene_name, "ZERO trimmed cpm in total, skip"))
+    }
+    
+  }
+  
+  return(wlm_df)
+  
+}
+
+
+# select genes, then wlm
+V1_all_gene_list <- colnames(V1_pvsst_Ttype_num_trim_fitting_logcpm_df_AIHW)[5:ncol(V1_pvsst_Ttype_num_trim_fitting_logcpm_df_AIHW)]
+
+V1_all_gene_Ttype_num_trim_fitting_logcpm_df <- func_trimed_df_select_genes(V1_pvsst_Ttype_num_trim_fitting_logcpm_df_AIHW, V1_all_gene_list, 
+                                                                            kept_col_names = c("cell_type", "sample_size", "AI", "HW"))
+
+# weighted linear regression
+V1_all_gene_HW_wlm_raw_df <- func_genes_wlm_df_rerun(V1_all_gene_Ttype_num_trim_fitting_logcpm_df, ephy_name = "HW")
+V1_all_gene_AI_wlm_raw_df <- func_genes_wlm_df_rerun(V1_all_gene_Ttype_num_trim_fitting_logcpm_df, ephy_name = "AI")
+
+
+# a function to remove na, then FDR
+func_wlm_naomit_fdr <- function(raw_wlm_df) {
+  wlm_df <- na.omit(raw_wlm_df)
+  wlm_df$FDR <- p.adjust(wlm_df$p_value, method = "BH")
+  
+  return(wlm_df)
+  
+}
+
+V1_all_gene_HW_wlm_df <- func_wlm_naomit_fdr(V1_all_gene_HW_wlm_raw_df)
+V1_all_gene_AI_wlm_df <- func_wlm_naomit_fdr(V1_all_gene_AI_wlm_raw_df)
+```
+
+
+```{r}
+V1_all_gene_AI_wlm_df_highly <- V1_all_gene_AI_wlm_df[V1_all_gene_AI_wlm_df$FDR <= 0.05 & V1_all_gene_AI_wlm_df$R_squared >= 0.2, ]
+colnames(V1_all_gene_AI_wlm_df_highly)[2:6] <- paste("V1_AI_", colnames(V1_all_gene_AI_wlm_df_highly)[2:6], sep = "")
+
+V1_all_gene_HW_wlm_df_highly <- V1_all_gene_HW_wlm_df[V1_all_gene_HW_wlm_df$FDR <= 0.05 & V1_all_gene_HW_wlm_df$R_squared >= 0.2, ]
+colnames(V1_all_gene_HW_wlm_df_highly)[2:6] <- paste("V1_HW_", colnames(V1_all_gene_HW_wlm_df_highly)[2:6], sep = "")
+```
+
+
+
+Differential expression analysis \
+```{r}
+V1_DE <- func_DE(V1_basic_QC, V1_pv_CS_list, V1_sst_CS_list, "PV", "SST")
+V1_DE_df <- as.data.frame(V1_DE)
+# DEGs, cutoff: padj <= 0.05, |log2FoldChange| >= 1
+V1_DEGs_df <- V1_DE_df[V1_DE_df$padj <= 0.05 & abs(V1_DE_df$log2FoldChange) >= 1, ]
+```
+
+
+
+
+
+
+
+
+
+
+
+

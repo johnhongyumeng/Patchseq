@@ -1,0 +1,859 @@
+---
+title: "Figure 5"
+author: "Yijie"
+date: "2025-08-11"
+output: html_document
+---
+
+M1 Patchseq data analysis \
+
+```{r}
+library(Seurat)
+library(ggplot2)
+library(ggridges)
+library(ggExtra)
+library(cowplot)
+library(stringr)
+library(readxl)
+library(plotly)
+library(htmlwidgets)
+library(VennDiagram)
+library(cowplot)
+library(xlsx)
+library(dplyr)
+```
+
+```{r}
+source("D:/2022fall/Patch-seq/1207_workflow/workflow_RNA_QC.R")
+source("D:/2022fall/Patch-seq/1207_workflow/funcs_transcriptomic.R")
+load("Input_Data/1018_contamination_scores.RData")
+```
+
+```{r}
+# read in rerun e-fitting data for V1 SST and PV, M1 room temp
+fitting_M1_roomtemp_raw_df <- read_excel("2025_revision_data/AAAroom_all_06302025.xlsx")[, -c(1,7,8,16)]
+
+# meta data for V1 and M1 cells
+metadata_M1_roomtemp <- read.csv("Input_Data/m1_patchseq_meta_data.csv", sep = "\t", check.names = F)
+submeta_M1_roomtemp <- metadata_M1_roomtemp[,c("Cell", "RNA family", "RNA type")]
+
+```
+
+
+```{r}
+# merge fitting results with T-type, layer
+M1_roomtemp_fitting_meta_raw_df <- merge(submeta_M1_roomtemp, fitting_M1_roomtemp_raw_df, by = "Cell", all = T)
+
+```
+
+```{r}
+# scRNA-seq QC and contamination score QC for M1
+# M1 raw count -- basic QC -- contamination -- CPM workflow
+M1_room_temp_raw_count <- read.csv("Input_Data/m1_patchseq_exon_counts.csv", header = T, check.names = F, row.names = 1)
+# based on meta data, remove cells whose RNA family is "low quality"
+M1_room_temp_good_cells <- submeta_M1_roomtemp$Cell[submeta_M1_roomtemp$`RNA family` != "low quality"]
+M1_room_temp_count <- M1_room_temp_raw_count[, colnames(M1_room_temp_raw_count) %in% M1_room_temp_good_cells]
+
+# basic QC and cpm
+M1_room_temp_seurat <- CreateSeuratObject(counts = M1_room_temp_count, project = "M1_room_temp", min.cells = 3, min.features = 200)
+M1_room_temp_seurat <- subset(M1_room_temp_seurat, subset = nFeature_RNA > 2000 & nFeature_RNA < 15000 & nCount_RNA > 6e5 & nCount_RNA < 7e6)
+M1_room_temp_cpm_df <- func_CPM(M1_room_temp_seurat)
+
+
+```
+
+```{r}
+# M1 contamination score
+# pv, sst and pyramidal cell list
+room_pv_cell_list <- submeta_M1_roomtemp$Cell[submeta_M1_roomtemp$`RNA family` == "Pvalb"]
+room_pyr_cell_list <- submeta_M1_roomtemp$Cell[submeta_M1_roomtemp$`RNA family` %in% c("ET", "IT", "CT", "NP")]
+room_sst_cell_list <- submeta_M1_roomtemp$Cell[submeta_M1_roomtemp$`RNA family` == "Sst"]
+
+# pv,sst and pyramidal cell cpm matrix
+room_pv_cpm_df <- M1_room_temp_cpm_df[, colnames(M1_room_temp_cpm_df) %in% room_pv_cell_list]
+room_pyr_cpm_df <- M1_room_temp_cpm_df[, colnames(M1_room_temp_cpm_df) %in% room_pyr_cell_list]
+room_sst_cpm_df <- M1_room_temp_cpm_df[, colnames(M1_room_temp_cpm_df) %in% room_sst_cell_list]
+
+# load data about gene markers and parameter "d"
+load("Input_Data/0323_mop_Yao_med_summed_markers.RData")
+# d parameters: 
+# Yao_mop_pv_micro, Yao_mop_pv_micro_on, Yao_mop_sst_micro, Yao_mop_sst_micro_on, Yao_mop_glu_micro, Yao_mop_glu_micro_on
+
+load("Input_Data/0802_Yao_med_summed_markers.RData") # VISp cells based, Yao_micro_micro is necessary
+# Yao_pv_micro, Yao_pv_micro_on, Yao_sst_micro, Yao_sst_micro_on, Yao_micro_micro, Yao_micro_micro_on
+
+# class_markers for calculation
+class_markers <- read.csv("Input_Data/class_markers.csv", header = T, check.names = F)
+
+
+# a function to calculate CS for a data frame where each column represents a single cell
+# the output should be a dataframe contain sample name (colname), contamination score based on non_on or _on "d" parameters
+func_CS <- function(cpm_matrix) {
+  # generate an empty data frame to store the summed log2(CPM+1) of each cell
+  CS_df <- as.data.frame(matrix(nrow = 2, ncol = ncol(cpm_matrix)))
+  colnames(CS_df) <- colnames(cpm_matrix)
+  rownames(CS_df) <- c("p_micro", "p_micro_on") # for two groups of Microglia markers
+  
+  # subset according to the Microglia markers
+  cpm_micro <- cpm_matrix[rownames(cpm_matrix) %in% class_markers$Macrophage, ]
+  cpm_micro_on <- cpm_matrix[rownames(cpm_matrix) %in% class_markers$Macrophage_on, ]
+  
+  # log2(cpm+1)
+  log_cpm_micro <- log2(cpm_micro+1)
+  log_cpm_micro_on <- log2(cpm_micro_on+1)
+  
+  # column sum ans store them in the CS_df
+  CS_df["p_micro", ] <- apply(log_cpm_micro,2,sum)
+  CS_df["p_micro_on", ] <- apply(log_cpm_micro_on,2,sum)
+  
+  return(CS_df)
+  
+}
+
+
+# use the function and reference parameters calculated previously based on Yao 2021 dataset, calculate room/ehpy temperature pv/sst cells contamination scores, and plot histogram to take a look at its distribution
+# reference parameters were based on VISp cells!
+
+# compare with VISp's microglia cells, all other parameters are calculated from Yao's MOp cells
+pre_cs_df_room_pv <- func_CS(room_pv_cpm_df)["p_micro", ]
+cs_df_room_pv <- (pre_cs_df_room_pv - Yao_mop_pv_micro)/(Yao_micro_micro - Yao_mop_pv_micro)
+cs_df_room_pv[cs_df_room_pv < 0] <- 0
+# hist(as.numeric(cs_df_room_pv), main = "room_temp PV contamination score", xlim = c(0,1))
+
+# compare with VISp's microglia cells, all other parameters are calculated from Yao's MOp cells
+pre_cs_df_room_sst <- func_CS(room_sst_cpm_df)["p_micro", ]
+cs_df_room_sst <- (pre_cs_df_room_sst - Yao_mop_sst_micro)/(Yao_micro_micro - Yao_mop_sst_micro)
+cs_df_room_sst[cs_df_room_sst < 0] <- 0
+# hist(as.numeric(cs_df_room_sst), main = "room_temp SST contamination score", xlim = c(0,1))
+
+# compare with VISp's microglia cells, all other parameters are calculated from Yao's MOp cells
+pre_cs_df_room_pyr <- func_CS(room_pyr_cpm_df)["p_micro", ]
+cs_df_room_pyr <- (pre_cs_df_room_pyr - Yao_mop_glu_micro)/(Yao_micro_micro - Yao_mop_glu_micro)
+cs_df_room_pyr[cs_df_room_pyr < 0] <- 0
+# hist(as.numeric(cs_df_room_pyr), main = "room_temp Pyramida cells contamination score", xlim = c(0,1))
+
+# M1 contamination QC cpm for 3 cell types (Pv, Sst, Pyramidal)
+M1_pv_CS_list <- func_CS_QC(cs_df_room_pv, cs_threshold = 0.2)
+M1_sst_CS_list <- func_CS_QC(cs_df_room_sst, cs_threshold = 0.2)
+M1_pyr_CS_list <- func_CS_QC(cs_df_room_pyr, cs_threshold = 0.2)
+
+M1_pvsstpyr_csqc_cpm <- M1_room_temp_cpm_df[, colnames(M1_room_temp_cpm_df) %in% c(M1_pv_CS_list, M1_sst_CS_list, M1_pyr_CS_list)]
+
+```
+
+
+
+```{r}
+# merge meta, e-fitting and cpm
+## M1
+M1_roomtemp_fitting_meta_df <- M1_roomtemp_fitting_meta_raw_df[-which(is.na(M1_roomtemp_fitting_meta_raw_df$`hero or Max`)), ]
+M1_roomtemp_fitting_meta_df <- M1_roomtemp_fitting_meta_df[(M1_roomtemp_fitting_meta_df$`hero or Max` == "hero"), ]
+M1_roomtemp_fitting_meta_df <- M1_roomtemp_fitting_meta_df[-which(is.na(M1_roomtemp_fitting_meta_df$HW)), ]
+colSums(is.na(M1_roomtemp_fitting_meta_df))
+```
+
+```{r}
+# print current RNA family (cell type)
+unique(M1_roomtemp_fitting_meta_df$`RNA family`)
+```
+
+```{r}
+# only keep ET, IT, CT, NP, Pvalb, Sst 
+M1_roomtemp_fitting_meta_df <- M1_roomtemp_fitting_meta_df[M1_roomtemp_fitting_meta_df$`RNA family` %in% c("Pvalb", "Sst", 
+                                                                                                           "ET", "IT", "CT", "NP"), ]
+M1_roomtemp_fitting_meta_df$cell_type <- ifelse(M1_roomtemp_fitting_meta_df$`RNA family` == "Pvalb", "Pvalb", ifelse(
+  M1_roomtemp_fitting_meta_df$`RNA family` == "Sst", "Sst", "Pyramidal"
+))
+
+M1_roomtemp_fitting_meta_logcpm <- func_ephy_Ttype_logtNorm(M1_roomtemp_fitting_meta_df, M1_pvsstpyr_csqc_cpm, merge_name = "Cell")
+```
+
+
+```{r}
+# before T-type trimmed mean, filter out genes with large drop-out/zero
+M1_roomtemp_fitting_meta_logcpm_gene_filter <- func_each_type_non_zero_quantile(M1_roomtemp_fitting_meta_logcpm, ncol_ephy = 15, quantile_cutoff = 0.1)
+```
+
+
+```{r}
+# T-type trimmed mean
+M1_Ttype_num_trim_fitting_ephy_df <- func_Ttype_trim_mean(M1_roomtemp_fitting_meta_logcpm_gene_filter, 
+                                                                remove_col_index = c(1:7, 9:11, 13:ncol(M1_roomtemp_fitting_meta_logcpm_gene_filter)), 
+                                                                group_col_name = "RNA type")
+# replace non-Pvalb and non-Sst cell types to Pyramidal
+M1_Ttype_num_trim_fitting_ephy_df$cell_type[!M1_Ttype_num_trim_fitting_ephy_df$cell_type %in% c("Pvalb", "Sst")] <- "Pyramidal"
+M1_Ttype_num_trim_fitting_ephy_df$EI_type <- ifelse(M1_Ttype_num_trim_fitting_ephy_df$cell_type == "Pyramidal", "E", "I")
+
+
+
+M1_Ttype_num_log_trim_cpm_df <- func_Ttype_recover_trim_mean(M1_roomtemp_fitting_meta_logcpm_gene_filter, 
+                                                                   remove_col_index = c(1:15), 
+                                                                   group_col_name = "RNA type")
+
+# cbind them without duplicate cell type and sample size
+M1_Ttype_num_trim_fitting_logcpm_df <- cbind(M1_Ttype_num_trim_fitting_ephy_df, 
+                                             M1_Ttype_num_log_trim_cpm_df[, -c(1:2)])
+
+
+```
+
+
+Differential expression analysis \
+```{r}
+M1_pvsst_DE <- func_DE(M1_room_temp_seurat, M1_pv_CS_list, M1_sst_CS_list, "Pvalb", "Sst")
+M1_pvsst_DE_df <- as.data.frame(M1_pvsst_DE)
+# DEGs, cutoff: padj <= 0.05, |log2FoldChange| >= 1
+# M1_DEGs_df <- M1_DE_df[M1_DE_df$padj <= 0.05 & abs(M1_DE_df$log2FoldChange) >= 1, ]
+```
+
+```{r}
+M1_DE <- func_DE(M1_room_temp_seurat, c(M1_pv_CS_list, M1_sst_CS_list), M1_pyr_CS_list, "I", "E")
+M1_DE_df <- as.data.frame(M1_DE)
+# DEGs, cutoff: padj <= 0.05, |log2FoldChange| >= 1
+M1_DEGs_df <- M1_DE_df[M1_DE_df$padj <= 0.05 & abs(M1_DE_df$log2FoldChange) >= 1, ]
+```
+
+
+
+```{r}
+# ion channel coding genes and bubble plot
+
+# select genes, then bubble plot
+ion_gene_list <- c("Kcnc1", "Kcnc2", "Kcnc3", "Kcnc4", 
+                   "Scn1a", "Scn2a1", "Scn3a", "Scn5a", "Scn8a", "Scn9a", "Scn11a", "Scn1b", 
+                   "Kcnn1", "Kcnn2", "Kcnn3", 
+                   "Cacna1a", "Cacna1b", "Cacna1c", "Cacna1d", "Cacna1e", "Cacna1f", 
+                   "Cacna1g", "Cacna1h", "Cacna1i")
+
+# another table that label all selected ion channel coding gene's channel type, regardless of whether the gene is remained
+ion_gene_info_df <- data.frame(gene_name = ion_gene_list, 
+                               ion_channel_name = c("Kv3.1", "Kv3.2", "Kv3.3", "Kv3.4", 
+                                                    "Nav1.1", "Nav1.2a", "Nav1.3a", "Nav1.5a", "Nav1.6a", "Nav1.7a", "Nav1.9a", "Nav1.1b", 
+                                                    "SK1", "SK2", "SK3", 
+                                                    "Cav2.1", "Cav2.2", "Cav1.2", "Cav1.3", "Cav2.3", "Cav1.4", 
+                                                    "Cav3.1", "Cav3.2", "Cav3.3"), 
+                               ion_channel_type = rep(c("Kv3", "Nav", "SK", "HVA_Cav", "LVA_Cav"), c(4,8,3,6,3)), 
+                               row.names = ion_gene_list)
+```
+
+
+Fold change bar plot: \
+```{r}
+func_genes_wlm_arrow_df_rerun <- function(sub_Ttype_num_trim_ephy_logcpm_df, DE_df, ephy_name = "AI") {
+  # the first 7 columns should be: cell_type, sample_size, HW, pvalue_ob, Kob_de, Aob_de, AI
+  # the 8th to the last columns are genes
+  # DE_df is supposed to be the output of DESeq2
+  
+  if (ephy_name == "AI") { # include HW in the 3th column
+    gene_list <- colnames(sub_Ttype_num_trim_ephy_logcpm_df)[c(3, 5:ncol(sub_Ttype_num_trim_ephy_logcpm_df))]
+  } else {
+    gene_list <- colnames(sub_Ttype_num_trim_ephy_logcpm_df)[5:ncol(sub_Ttype_num_trim_ephy_logcpm_df)]
+  }
+
+  # generate an empty data frame, each row for a gene's wlm results
+  wlm_df <- as.data.frame(matrix(nrow = length(gene_list), ncol = 10))
+  colnames(wlm_df) <- c("gene_name", "p_value", "R_squared", "slope", "n_log_p", "w_mean_logcpm_pv", "w_mean_logcpm_pyr", 
+                        "DE_log2FoldChange", "DE_padj", 
+                        "DE_sig")
+  rownames(wlm_df) <- gene_list
+  wlm_df$gene_name <- gene_list
+  # index for PV and SST T-types, for later weighted mean of expression level of the two cell types separately
+  # ind_pv <- which(sub_Ttype_num_trim_ephy_logcpm_df$cell_type == "Pvalb")
+  # ind_sst <- which(sub_Ttype_num_trim_ephy_logcpm_df$cell_type == "Sst")
+  ind_pv <- which(sub_Ttype_num_trim_ephy_logcpm_df$cell_type == "Pvalb")
+  ind_pyr <- which(sub_Ttype_num_trim_ephy_logcpm_df$cell_type == "Pyramidal")
+  col_sample_size <- sub_Ttype_num_trim_ephy_logcpm_df$sample_size
+  
+  # for loop to get p_value, R_squared and slope
+  for (i in 1:length(gene_list)) {
+    i_gene_name <- gene_list[i]
+    i_ephy <- sub_Ttype_num_trim_ephy_logcpm_df[, ephy_name]
+    i_trim_cpm <- sub_Ttype_num_trim_ephy_logcpm_df[, i_gene_name]
+    
+    # if sum(i_trim_cpm) > 0, run the wlm; else, skip to next one
+    if(sum(i_trim_cpm) > 0) {
+      i_wlm <- lm(i_ephy ~ i_trim_cpm, weights = sub_Ttype_num_trim_ephy_logcpm_df$sample_size)
+      i_sum_wlm <- summary(i_wlm)
+      wlm_df[i, 2:4] <- c(i_sum_wlm$coefficients[2,4], i_sum_wlm$r.squared, i_sum_wlm$coefficients[2,1])
+      wlm_df[i, 5] <- -log10(wlm_df[i,2])
+      # for arrow plot, w_mean for "weighted mean", and it is suppossed to be calculated for PV and SST separately
+      wlm_df[i, 6] <- weighted.mean(i_trim_cpm[ind_pv], col_sample_size[ind_pv])
+      wlm_df[i, 7] <- weighted.mean(i_trim_cpm[ind_pyr], col_sample_size[ind_pyr])
+      # the factor indicating whether this gene has large fold change and good adjp
+      wlm_df[i, 10] <- ifelse(abs(DE_df[i_gene_name, "log2FoldChange"])>=1 & DE_df[i_gene_name, "padj"]<=0.05, 
+                              "sig", "not_sig")
+      
+      if(i_gene_name %in% rownames(DE_df)) {
+        wlm_df[i, 8] <- DE_df[i_gene_name, "log2FoldChange"]
+        wlm_df[i, 9] <- DE_df[i_gene_name, "padj"]
+      } else {
+        wlm_df[i, 8] <- NA
+        wlm_df[i, 9] <- NA
+        print(paste(i_gene_name, "not in DESeq output"))
+      }
+      
+      
+    } else {
+      print(paste(i_gene_name, "ZERO trimmed cpm in total, skip"))
+    }
+    
+  }
+  
+  # make the wlm$DE_sig as factor
+  wlm_df$DE_sig <- factor(wlm_df$DE_sig, levels = c("sig", "not_sig"))
+  
+  return(wlm_df)
+  
+}
+
+
+
+
+
+func_bar_plot_foldchange <- function(gene_Ttype_wlm_df, gene_info_df, ephy = "AI", plot_title = NULL) {
+  # Data preparation
+  gg_df_pre <- merge(gene_Ttype_wlm_df, gene_info_df, by = "gene_name", all.x = TRUE)
+  rownames(gg_df_pre) <- gg_df_pre$gene_name
+  
+  gene_level <- c("Kv3", "Nav", "SK", "HVA_Cav", "LVA_Cav")
+  list_color <- c("Kv3" = "#e22e2a", "Nav" = "#e28a2a", "SK" = "#76d51d", 
+                  "HVA_Cav" = "#a257e8", "LVA_Cav" = "#f4bbff")
+  
+  # Handle HW case
+  if (ephy == "AI") {
+    gg_df_pre["HW", "ion_channel_type"] <- "HW"
+    gg_df_pre["HW", "ion_channel_name"] <- "HW"
+  }
+  
+  gg_df_pre$ion_channel_type <- factor(gg_df_pre$ion_channel_type, levels = gene_level)
+  
+  # Remove HW for bar plotting if needed
+  if (ephy == "AI") {
+    gg_df <- gg_df_pre[rownames(gg_df_pre) != "HW", ]
+  } else {
+    gg_df <- gg_df_pre
+  }
+  
+  # Compute log2 fold change
+  gg_df$log2_fc <- gg_df$w_mean_logcpm_pyr - gg_df$w_mean_logcpm_pv
+  
+  # Order by n_log_p
+  gg_df <- gg_df[order(gg_df$n_log_p), ]
+  
+  # Determine where HW would fall
+  hw_gene_index <- NULL
+  if ("HW" %in% rownames(gg_df_pre)) {
+    df_all_ordered <- gg_df_pre[order(gg_df_pre$n_log_p), ]
+    hw_gene_index <- which(rownames(df_all_ordered) == "HW")
+  }
+  
+  # Create plotting data
+  plot_df <- data.frame(
+    gene_name = gg_df$gene_name,
+    gene_index = 1:nrow(gg_df),
+    n_log_p = gg_df$n_log_p,
+    ion_channel_type = gg_df$ion_channel_type,
+    log2_fc = gg_df$log2_fc,
+    DE_padj = gg_df$DE_padj,
+    DE_sig = gg_df$DE_sig
+  )
+  
+  # Calculate y-axis range
+  max_log2_fc <- max(plot_df$log2_fc, na.rm = TRUE)
+  min_log2_fc <- min(plot_df$log2_fc, na.rm = TRUE)
+  y_padding <- 0.2 * max(abs(max_log2_fc), abs(min_log2_fc))
+  y_max <- max_log2_fc + y_padding
+  y_min <- min_log2_fc - y_padding
+  
+  plot_df$star_height <- ifelse(plot_df$log2_fc >= 0,
+                                plot_df$log2_fc + (y_padding * 0.5),
+                                plot_df$log2_fc - (y_padding * 0.5))
+  
+  log_p_df <- data.frame(
+    gene_index = 1:nrow(gg_df),
+    gene_name = gg_df$gene_name,
+    n_log_p = gg_df$n_log_p
+  )
+  
+  # Create base plot
+  gg_bar <- ggplot(plot_df, aes(x = gene_index, y = log2_fc)) +
+    geom_bar(aes(fill = ion_channel_type),
+             stat = "identity", width = 0.7,
+             color = "black", linewidth = 0.8) +
+    geom_hline(yintercept = 0, linetype = "solid", color = "darkgray", linewidth = 0.5) +
+    scale_fill_manual(values = list_color, name = "Ion Channel Type") +
+    labs(x = expression("Gene (ordered by -"*log[10]~"p-value)"),
+         y = expression(atop(log[2]~"Fold Change (Pyramidal/PV)", "positive = higher in Pyramidal")),
+         title = plot_title) +
+    scale_x_continuous(breaks = 1:nrow(gg_df), labels = gg_df$gene_name) +
+    scale_y_continuous(limits = c(y_min, y_max)) +
+    theme_bw()
+  
+  # Add -log10(p) under bars
+  log_p_position <- y_min + (y_padding * 0.3)
+  gg_bar <- gg_bar +
+    geom_text(data = log_p_df,
+              aes(x = gene_index, y = log_p_position, label = sprintf("%.2f", n_log_p)),
+              vjust = 0.5, size = 3, color = "darkgray") +
+    annotate("text", x = 0.5, y = log_p_position, label = expression(-log[10]~p^"WLR"),
+             hjust = 0, vjust = -0.7, size = 3, fontface = "italic", color = "darkgray")
+  
+  # Set gene name x-axis label colors
+  gene_colors <- list_color[as.character(gg_df$ion_channel_type)]
+  names(gene_colors) <- gg_df$gene_name
+  gg_bar <- gg_bar + theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      size = 10,
+      color = gene_colors
+    ),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    plot.title = element_text(hjust = 0, size = 14, face = "bold"),
+    plot.margin = margin(t = 15, r = 10, b = 10, l = 10, unit = "pt")
+  )
+  
+  # Add dashed line at HW's hypothetical position
+  if (!is.null(hw_gene_index) && length(hw_gene_index) == 1) {
+    vline_df <- data.frame(gene_index = hw_gene_index, label = "HW")
+    
+    gg_bar <- gg_bar +
+      geom_vline(data = vline_df, aes(xintercept = gene_index-0.5, linetype = label, color = label),
+                 linewidth = 1) +
+      scale_linetype_manual(name = "", values = c("HW" = "dashed")) +
+      scale_color_manual(name = "", values = c("HW" = "#4da6ff")) +
+      annotate("text", x = hw_gene_index, y = y_max-0.5, label = "HW", 
+               vjust = 1, hjust = 0, size = 3.5, color = "#4da6ff")
+  }
+  
+  return(gg_bar)
+}
+
+
+```
+
+
+```{r}
+M1_ion_gene_Ttype_num_trim_fitting_logcpm_df <- func_trimed_df_select_genes(M1_Ttype_num_trim_fitting_logcpm_df, ion_gene_list, 
+                                                                            kept_col_names = c("cell_type", 
+                                                                                               "sample_size", 
+                                                                                               "HW", 
+                                                                                               "AI"))
+```
+
+```{r}
+M1_ion_gene_AI_wlm_arrow_df <- func_genes_wlm_arrow_df_rerun(M1_ion_gene_Ttype_num_trim_fitting_logcpm_df, M1_DE_df, ephy_name = "AI")
+M1_FC_AI <- func_bar_plot_foldchange(M1_ion_gene_AI_wlm_arrow_df, ion_gene_info_df, ephy = "AI",
+                                       plot_title = "dAdap")
+M1_FC_AI
+```
+
+```{r}
+M1_ion_gene_HW_wlm_arrow_df <- func_genes_wlm_arrow_df_rerun(M1_ion_gene_Ttype_num_trim_fitting_logcpm_df, M1_DE_df, ephy_name = "HW")
+M1_FC_HW <- func_bar_plot_foldchange(M1_ion_gene_HW_wlm_arrow_df, ion_gene_info_df, ephy = "HW", 
+                                       plot_title = "HW")
+M1_FC_HW
+```
+
+
+```{r}
+func_bar_plot_PV_CPM <- function(gene_Ttype_wlm_df, gene_info_df, ephy = "AI", plot_title = NULL) {
+  # Data preparation - similar to original function
+  gg_df_pre <- merge(gene_Ttype_wlm_df, gene_info_df, by = "gene_name", all.x = TRUE)
+  rownames(gg_df_pre) <- gg_df_pre$gene_name
+  
+  gene_level <- c("Kv3", "Nav", "SK", "HVA_Cav", "LVA_Cav")
+  list_color <- c("Kv3" = "#e22e2a", "Nav" = "#e28a2a", "SK" = "#76d51d", 
+                  "HVA_Cav" = "#a257e8", "LVA_Cav" = "#f4bbff")
+  
+  # Handle HW case
+  if (ephy == "AI") {
+    gg_df_pre["HW", "ion_channel_type"] <- "HW"
+    gg_df_pre["HW", "ion_channel_name"] <- "HW"
+  }
+  
+  gg_df_pre$ion_channel_type <- factor(gg_df_pre$ion_channel_type, levels = gene_level)
+  
+  # Remove HW for main plot if needed
+  if (ephy == "AI") {
+    gg_df <- gg_df_pre[rownames(gg_df_pre) != "HW", ]
+  } else {
+    gg_df <- gg_df_pre
+  }
+  
+  # Sort the genes by n_log_p value (ascending order)
+  gg_df <- gg_df[order(gg_df$n_log_p), ]
+  
+  # Create a dataframe for the bars
+  plot_df <- data.frame(
+    gene_name = gg_df$gene_name,
+    gene_index = 1:nrow(gg_df),
+    n_log_p = gg_df$n_log_p,
+    pv_cpm = gg_df$w_mean_logcpm_pv,
+    DE_padj = gg_df$DE_padj,
+    ion_channel_type = gg_df$ion_channel_type
+  )
+  
+  # Calculate y-axis limits
+  max_pv_cpm <- max(plot_df$pv_cpm, na.rm = TRUE)
+  min_pv_cpm <- min(plot_df$pv_cpm, na.rm = TRUE)
+  y_padding <- 0.1 * (max_pv_cpm - min_pv_cpm)
+  y_max <- max_pv_cpm + y_padding
+  
+  # Position for stars (if enabled later)
+  plot_df$star_height <- plot_df$pv_cpm + (y_padding * 0.5)
+  
+  # Create the base plot
+  gg_bar <- ggplot(plot_df, aes(x = gene_index, y = pv_cpm)) +
+    geom_bar(stat = "identity", fill = "grey60",  # <- Uniform grey color
+             width = 0.7, color = "black", linewidth = 0.8) +
+    
+    geom_hline(yintercept = 0, linetype = "solid", color = "darkgray", linewidth = 0.5) +
+    
+    labs(x = expression("Gene (ordered by -"*log[10]~"p-value)"), 
+         y = expression(log[2]~"CPM in PV cells"),
+         title = plot_title) +
+    
+    scale_x_continuous(breaks = 1:nrow(gg_df), labels = gg_df$gene_name) +
+    scale_y_continuous(limits = c(0, y_max)) +
+    theme_bw()
+  
+  # Create gene label colors for x-axis (based on ion channel type)
+  gene_colors <- list_color[as.character(gg_df$ion_channel_type)]
+  names(gene_colors) <- gg_df$gene_name
+  
+  # Apply final theme
+  gg_bar <- gg_bar + theme(
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      size = 10,
+      color = gene_colors
+    ),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    plot.title = element_text(hjust = 0, size = 14, face = "bold"),
+    plot.margin = margin(t = 15, r = 10, b = 10, l = 10, unit = "pt")
+  )
+  
+  return(gg_bar)
+}
+```
+
+```{r}
+M1_PV_logCPM_AI <- func_bar_plot_PV_CPM(M1_ion_gene_AI_wlm_arrow_df, ion_gene_info_df, ephy = "AI", 
+                                       plot_title = "Adap-ordered gene expression level in M1 PV cells")
+M1_PV_logCPM_AI
+```
+
+
+
+
+
+Bubble plot \
+```{r}
+# function for T-type trimmed mean bubble plot with 3 cell types
+func_M1_Ttype_bubble_ggplot <- function(Ttype_num_med_df, gene_name, ephy = "HW/AI", save_plot = FALSE) {
+  # Subset the relevant columns
+  w_df <- Ttype_num_med_df[, c("cell_type", "sample_size", ephy, gene_name)]
+  
+  # Extract columns for regression
+  col_ephy <- w_df[, ephy]
+  col_gene <- w_df[, gene_name]
+  col_ss <- w_df$sample_size
+  
+  # Fit weighted linear model
+  Ttype_w_lm <- lm(col_ephy ~ col_gene, weights = col_ss)
+  sum_Ttype_w_lm <- summary(Ttype_w_lm)
+  
+  # Summary statistics
+  lm_df <- data.frame(
+    p_value = sum_Ttype_w_lm$coefficients[2, 4],
+    R_squared = sum_Ttype_w_lm$r.squared,
+    slope = sum_Ttype_w_lm$coefficients[2, 1],
+    row.names = gene_name
+  )
+  print(lm_df)
+  
+  # Predict values from the model
+  w_df$i_pred <- predict(Ttype_w_lm)
+  
+  # Define cell type colors
+  cell_type_colors <- c(
+    "Pvalb" = "#00bfc4",
+    "Pyramidal" = "#f87269",
+    "Sst" = "#00a86b"
+  )
+  
+  # Create plot
+  lm_ggplot <- ggplot(data = w_df, aes(x = .data[[gene_name]], y = .data[[ephy]])) + 
+    geom_point(aes(color = cell_type, size = sample_size), alpha = 0.75) + 
+    scale_size(range = c(0, 6), limits = c(0, 60)) + 
+    scale_color_manual(values = cell_type_colors) + 
+    geom_line(aes(y = i_pred), colour = "#000000", linewidth = 0.7) + 
+    ggtitle(paste(ephy, "~", gene_name)) + 
+    theme_classic() + 
+    theme(axis.line = element_line(linewidth = 0.9), ## width of axis
+        axis.text = element_text(size = 20), 
+        axis.title = element_text(size = 25), 
+        plot.title = element_text(size = 30),
+        legend.text = element_text(size = 20), 
+        legend.title = element_text(size = 20)) + 
+    guides(color = guide_legend(override.aes = list(size = 3)))
+  
+  # Save plot if requested
+  if (save_plot) {
+    ggsave(filename = paste0("Output_Data/Ttype_weighted/pvsst_bubble_", ephy, "_", gene_name, ".png"),
+           plot = lm_ggplot, width = 6, height = 4)
+  }
+  
+  return(lm_ggplot)
+}
+
+```
+
+```{r}
+# EI bubble plot for supplementary
+func_M1_EI_bubble_ggplot <- function(Ttype_num_med_df, gene_name, ephy = "HW/AI", save_plot = FALSE) {
+  # Subset relevant columns
+  w_df <- Ttype_num_med_df[, c("EI_type", "cell_type", "sample_size", ephy, gene_name)]
+  
+  # Define EI type colors
+  EI_colors <- c(
+    "E" = "#f87269",  # E cell
+    "I" = "#00bfc4"   # I cell
+  )
+  
+  # Initialize plot base
+  lm_ggplot <- ggplot(data = w_df, aes(x = .data[[gene_name]], y = .data[[ephy]])) + 
+    geom_point(aes(color = EI_type, size = sample_size), alpha = 0.75) + 
+    scale_size(range = c(0, 6), limits = c(0, 60)) + 
+    scale_color_manual(values = EI_colors) + 
+    theme_classic() + 
+    theme(
+      axis.line = element_line(linewidth = 0.9),
+      axis.text = element_text(size = 20),
+      axis.title = element_text(size = 25),
+      plot.title = element_text(size = 30),
+      legend.text = element_text(size = 20),
+      legend.title = element_text(size = 20)
+    ) +
+    guides(color = guide_legend(override.aes = list(size = 3))) +
+    ggtitle(paste(ephy, "~", gene_name))
+
+  # Fit and add regression lines separately for Exc and Inh
+  for (ei in c("E", "I")) {
+    sub_df <- w_df[w_df$EI_type == ei, ]
+    col_ephy <- sub_df[[ephy]]
+    col_gene <- sub_df[[gene_name]]
+    col_ss <- sub_df$sample_size
+
+    # Fit weighted linear model
+    ei_lm <- lm(col_ephy ~ col_gene, weights = col_ss)
+    ei_sum <- summary(ei_lm)
+
+    # Print annotated regression summary
+    # cat(paste0("=== ", ei, " Cells ===\n"))
+    print(data.frame(
+      p_value = ei_sum$coefficients[2, 4],
+      R_squared = ei_sum$r.squared,
+      slope = ei_sum$coefficients[2, 1],
+      row.names = paste0(gene_name, " in ", ei, " cells")
+    ))
+
+    # Predict values for plotting
+    sub_df$i_pred <- predict(ei_lm)
+
+    # Add line to plot
+    lm_ggplot <- lm_ggplot + 
+      geom_line(data = sub_df, aes(x = .data[[gene_name]], y = i_pred),
+                color = EI_colors[ei], linewidth = 0.9)
+  }
+  
+  # Fit combined model using formula: ephy ~ gene + EI_type
+  comb_formula <- as.formula(paste(ephy, "~", gene_name, "+ EI_type"))
+  comb_lm <- lm(formula = comb_formula, data = w_df, weights = w_df$sample_size)
+  comb_sum <- summary(comb_lm)
+  # Print regression summary
+  print(comb_sum)
+  # print(data.frame(
+  #   p_value = comb_sum$coefficients[2, 4], 
+  #   R_squared = comb_sum$r.squared, 
+  #   slope = comb_sum$coefficients[2, 1],
+  #   row.names = paste0(gene_name, " in class model")
+  # ))
+
+  # Save plot if requested
+  if (save_plot) {
+    ggsave(filename = paste0("Output_Data/Ttype_weighted/EI_bubble_", ephy, "_", gene_name, ".png"),
+           plot = lm_ggplot, width = 6, height = 4)
+  }
+
+  return(lm_ggplot)
+}
+
+
+```
+
+
+
+```{r}
+M1_AIHW <- func_M1_Ttype_bubble_ggplot(M1_Ttype_num_trim_fitting_logcpm_df, gene_name = "HW", ephy = "AI") + 
+  xlab(expression("HW (ms)")) + ylab("dAdap") + 
+  scale_x_continuous(breaks = seq(0, 3, 1), limits = c(0, 3.2)) +
+  scale_y_continuous(breaks = seq(0, 1.0, 0.25), limits = c(0, 1.2)) +  ## ticks of axis
+  coord_fixed(ratio = 2.2)  +
+  annotate("text", x = 0.6, y = 1.1, label = expression(italic("p") == 1.11e-6), size = 6) +
+  annotate("text", x = 0.6, y = 1.0, label = expression(R^2 == 0.38), size = 6) +
+  annotate("text", x = 0.6, y = 0.9, label = expression(italic(k) == 0.17), size = 6)
+M1_AIHW
+```
+
+```{r}
+M1_AI_Kcnn2_title <- expression(paste("SK2(", italic("Kcnn2"), ")", sep = ""))
+M1_AI_Kcnn2 <- func_M1_Ttype_bubble_ggplot(M1_Ttype_num_trim_fitting_logcpm_df, gene_name = "Kcnn2", ephy = "AI") + 
+  ggtitle(M1_AI_Kcnn2_title) + 
+  xlab(expression(paste(log[2], "(CPM+1)"))) + ylab("dAdap") +
+  scale_x_continuous(breaks = seq(0, 8, 2), limits = c(0, 9)) +
+  scale_y_continuous(breaks = seq(0, 1.0, 0.25), limits = c(0, 1.2)) +  ## ticks of axis
+  coord_fixed(ratio = 6)  +
+  annotate("text", x = 4, y = 1.2, label = expression(italic("p") == 0.019), size = 6) +
+  annotate("text", x = 4, y = 1.1, label = expression(R^2 == 0.10), size = 6) +
+  annotate("text", x = 4, y = 0.95, label = expression(italic(k) == -0.031), size = 6)
+M1_AI_Kcnn2
+```
+
+
+```{r}
+M1_AI_Cacna1g_title <- expression(paste("Cav3.1(", italic("Cacna1g"), ")", sep = ""))
+M1_AI_Cacna1g <- func_M1_Ttype_bubble_ggplot(M1_Ttype_num_trim_fitting_logcpm_df, gene_name = "Cacna1g", ephy = "AI") + 
+  ggtitle(M1_AI_Cacna1g_title) + 
+  xlab(expression(paste(log[2], "(CPM+1)"))) + ylab("dAdap") +
+  scale_x_continuous(breaks = seq(0, 10, 2.5), limits = c(0, 10.1)) +
+  scale_y_continuous(breaks = seq(0, 1.0, 0.25), limits = c(0, 1.2)) +  ## ticks of axis
+  coord_fixed(ratio = 6)  +
+  annotate("text", x = 2, y = 1.2, label = expression(italic("p") == 2.10e-5), size = 6) +
+  annotate("text", x = 2, y = 1.1, label = expression(R^2 == 0.31), size = 6) +
+  annotate("text", x = 2, y = 0.95, label = expression(italic(k) == 0.042), size = 6)
+M1_AI_Cacna1g
+```
+
+
+Heatmap: \
+
+```{r}
+func_make_heatmap_df = function(DE_df, heatmap_gene_list){
+  sub_DE_df <- DE_df[heatmap_gene_list, ]
+  rownames(sub_DE_df) <- heatmap_gene_list
+  sub_DE_df$if_DE <- ifelse(sub_DE_df$padj < 0.05, "*", NA)
+  sub_DE_df$DEG_FC <- ifelse(sub_DE_df$if_DE == "*", 
+                                ifelse(abs(sub_DE_df$log2FoldChange)>2, "***", ifelse(
+                                  abs(sub_DE_df$log2FoldChange)>1, "**", ifelse(
+                                    abs(sub_DE_df$log2FoldChange)>0.5, "*", NA
+                                  )
+                                )), 
+                                NA)
+  return (sub_DE_df)
+}
+```
+
+
+```{r}
+library(pheatmap)
+```
+
+```{r}
+#Heatmap Genes and respective ion channels
+heatmap_gene_list <- c("Kcnc1", "Kcnc2", "Kcnc3", "Kcnc4", 
+                   "Scn1a", "Scn3a", "Scn5a", "Scn8a", "Scn9a", "Scn11a", "Scn1b", 
+                   "Kcnn1", "Kcnn2", "Kcnn3", 
+                   "Cacna1a", "Cacna1b", "Cacna1c", "Cacna1d", "Cacna1e", "Cacna1f", "Cacna1g", "Cacna1h", "Cacna1i", 
+                   "Kcnma1", "Kcnmb2", "Kcnmb3", "Kcnmb4",
+                   "Rn7sk", "Actb")
+ion_channel_list = factor(rep(c("Kv3", "Nav", "SK", "HVA", "LVA", "BK", "Reference"), c(4,7,3,6,3,4,2)), levels = c("Kv3", "Nav", "SK", "HVA", "LVA", "BK", "Reference"))
+
+channel_names = c("Kv3.1", "Kv3.2", "Kv3.3", "Kv3.4",
+                  "Nav1.1", "Nav1.3a", "Nav1.5a", "Nav1.6a", "Nav1.7a", "Nav1.9a", "Nav1.1b",
+                  "SK1", "SK2", "SK3", 
+                  "Cav2.1", "Cav2.2", "Cav1.2", "Cav1.3", "Cav2.3", "Cav1.4", "Cav3.1", "Cav3.2", "Cav3.3", 
+                  "KCa1.1", "BKBeta2", "BKBeta3", "BKBeta4",
+                  "Reference Gene", "Reference Gene")
+  
+df_pre_heatmap <- M1_roomtemp_fitting_meta_logcpm[, c("Cell", "cell_type", heatmap_gene_list)]
+
+df_pre_pv <- df_pre_heatmap[df_pre_heatmap$cell_type == "Pvalb", ] 
+df_pre_sst <- df_pre_heatmap[df_pre_heatmap$cell_type == "Sst", ] 
+df_pre_pyr <- df_pre_heatmap[df_pre_heatmap$cell_type == "Pyramidal", ]
+
+
+df_heatmap_pv <- t(df_pre_pv[, -c(1,2)])
+df_heatmap_sst <- t(df_pre_sst[, -c(1,2)])
+df_heatmap_pyr <- t(df_pre_pyr[, -c(1,2)])
+
+df_heatmap <-cbind(df_heatmap_pv, df_heatmap_sst, df_heatmap_pyr)
+colnames(df_heatmap) <- 1:ncol(df_heatmap)
+
+sub_M1_EI_DE_df <- func_make_heatmap_df(M1_DE_df, heatmap_gene_list)
+sub_M1_sst_pv_DE_df <- func_make_heatmap_df(M1_pvsst_DE_df, heatmap_gene_list)
+
+sub_M1_EI_DE_df$DEG_FC <- sapply(sub_M1_EI_DE_df$DEG_FC, function(x) {
+  if (is.na(x)) {
+    return("")
+  } else {
+    return(strrep("+", nchar(x)))
+  }
+})
+
+anno_col <- data.frame(cell_type = factor(rep(c("PV", "SST", "Pyramidal"), c(length(df_pre_pv$Cell),length(df_pre_sst$Cell), length(df_pre_pyr$Cell)), levels = c("PV", "SST"))))
+
+anno_row <- data.frame(ion_channel = factor(rep(c("Kv3", "Nav", "SK", "HVA", "LVA", "BK", "Reference"), c(4,7,3,6,3,4,2)), levels = c("Kv3", "Nav", "SK", "HVA", "LVA", "BK", "Reference")), row.names = heatmap_gene_list)
+
+anno_colors  <- list(cell_type = c(PV = "#0000ff", SST = "#00ff00", Pyramidal = "gray0"),ion_channel = c(Kv3 = "#eb706d", Nav = "#ebaf6d", SK = "#c4f19a", HVA = "#c79af1", LVA = "#f4bbff", BK = "hotpink", Reference = "#4da6ff"))
+
+lab_row <- character(length(heatmap_gene_list))
+for (i in 1:length(heatmap_gene_list)){
+  sst_pv_sig <- sub_M1_sst_pv_DE_df$DEG_FC[i]
+  ei_sig <- sub_M1_EI_DE_df$DEG_FC[i]
+  if (is.na(sst_pv_sig)){
+    sst_pv_sig <- ""
+  }
+  
+  label_name <- paste(channel_names[i], "(", heatmap_gene_list[i], ") ", sst_pv_sig, ei_sig, sep = "")
+  lab_row[i] <- label_name
+}
+```
+
+```{r}
+h_plot <- pheatmap(df_heatmap, cluster_cols = F, cluster_rows = F, show_colnames = F, 
+         annotation_col = anno_col, annotation_row = anno_row,
+         gaps_row = c(4,11,14, 23, 27), gaps_col = c(length(df_pre_pv$Cell), length(df_pre_pv$Cell) + length(df_pre_sst$Cell)), angle_col = 0,
+         annotation_colors = anno_colors,
+         main = expression(paste("log"["2"], "(CPM+1) of ion channel coding gene", sep = "")), 
+         labels_row = lab_row, 
+         annotation_names_col = F, annotation_names_row = F)
+
+h_plot
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
