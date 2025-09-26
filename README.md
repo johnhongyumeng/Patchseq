@@ -1,5 +1,10 @@
 # Patchseq
-This folder is to save and update the codes that used to analyze Patchseq data from Allen Institue.  
+This folder is to save and update the codes that used to analyze Patchseq data from Allen Institue.  The code is used in generating the figures for paper:
+
+In Search of Transcriptomic Correlates of Neuronal Firing-Rate Adaptation across Subtypes, Regions and Species: A Patch-seq Analysis
+
+https://www.biorxiv.org/content/10.1101/2024.12.05.627057v2
+
 Developed by John Hongyu Meng and Yijie Kang.  
 09/26/2025  
 
