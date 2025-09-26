@@ -5,6 +5,10 @@ In Search of Transcriptomic Correlates of Neuronal Firing-Rate Adaptation across
 
 https://www.biorxiv.org/content/10.1101/2024.12.05.627057v2
 
+For specific figure reproduction, see the correponding R code. 
+
+For HH model, see code under ./HHmodel/
+
 Developed by John Hongyu Meng and Yijie Kang.  
 09/26/2025  
 
