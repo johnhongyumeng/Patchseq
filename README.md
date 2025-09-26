@@ -1,7 +1,7 @@
 # Patchseq
 This folder is to save and update the codes that used to analyze Patchseq data from Allen Institue.  
 Developed by John Hongyu Meng and Yijie Kang.  
-01/05/2022  
+09/26/2025  
 
 
 ## Data Sources
@@ -16,7 +16,9 @@ http://data.nemoarchive.org/other/AIBS/AIBS_patchseq/transcriptome/scell/SMARTse
 2. basic quality control based on selected cells' normalized (CPM) count matrix - **cell type annotation contamination issue unsolved, 01/06/2022**
 3. for cells that pass the quality control, find their electrophysiological data's url (of nwb files) from file manifest
 4. download nwb files
-5. Requires ipfx package from Allen. Needs to be installed with Python 3.6 or 3.8. Seems 3.6 is a bit more robust. (No error on John's Windows Laptop, vs. 1 error with Python 3.8)
+5. Requires ipfx package from Allen. Needs to be installed with Python 3.6 or 3.8. It seems that build a new environment with Python 3.6 is most robust way using the package.
 
 ## To analyze the electronical features, using AllenAI_Loop_* to generate a combined analyze. 
 1. The code AllenAI_cell_*, AllenAI_ind_* are used to check individual cell or individual sweep, respectively.
+2. To analyze batch data, run code ./EphysCode/Allen_V1_general_nowaring.py to get most of E-feature, including half-width (HW). Please note that the AI generated from the code is not used anymore. We keep it here for historical reason.
+3. To generate measurement about firing rate adaptation and onset bursting (i.e., dAdap and p-value for onser bursting.), run code ./EphysCode/Allen_V1_getrheo.py. This code using the previous generated AP info directly, so can be used independent of ipfx package from Allen
